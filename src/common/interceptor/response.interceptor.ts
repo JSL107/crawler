@@ -10,9 +10,10 @@ import { ResponseCode } from '../exception/response-code.enum';
 import { ApiResponse } from '../response/api-response.type';
 
 @Injectable()
-export class ResponseInterceptor<T>
-  implements NestInterceptor<T, ApiResponse<T>>
-{
+export class ResponseInterceptor<T> implements NestInterceptor<
+  T,
+  ApiResponse<T>
+> {
   intercept(
     _context: ExecutionContext,
     next: CallHandler<T>,

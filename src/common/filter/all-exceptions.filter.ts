@@ -9,6 +9,7 @@ import {
 import { Request, Response } from 'express';
 
 import { AppException } from '../exception/app.exception';
+import { DomainException } from '../exception/domain.exception';
 import { ResponseCode } from '../exception/response-code.enum';
 import { ApiResponse } from '../response/api-response.type';
 
@@ -37,12 +38,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       return exception.getStatus();
     }
+    if (exception instanceof DomainException) {
+      return exception.httpStatus;
+    }
     return HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
   private resolveCode(exception: unknown): ResponseCode {
     if (exception instanceof AppException) {
       return exception.responseCode;
+    }
+    if (exception instanceof DomainException) {
+      const code = Object.values(ResponseCode).find(
+        (value) => value === exception.errorCode,
+      );
+      return code ?? ResponseCode.INTERNAL_SERVER_ERROR;
     }
     if (exception instanceof HttpException) {
       return ResponseCode.INTERNAL_SERVER_ERROR;
@@ -52,6 +62,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   private resolveMessage(exception: unknown): string {
     if (exception instanceof HttpException) {
+      return exception.message;
+    }
+    if (exception instanceof DomainException) {
       return exception.message;
     }
     return '서버 오류가 발생했습니다.';

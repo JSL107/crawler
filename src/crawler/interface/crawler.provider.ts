@@ -4,9 +4,15 @@ import { Queue } from 'bullmq';
 import { createHash } from 'node:crypto';
 
 import { CrawlTarget } from '../domain/crawler.type';
+import {
+  CRAWL_QUEUE_PORT,
+  CrawlQueuePort,
+} from '../domain/port/crawl-queue.port';
+
+export { CRAWL_QUEUE_PORT };
 
 @Injectable()
-export class CrawlerProvider {
+export class CrawlerProvider implements CrawlQueuePort {
   constructor(
     @InjectQueue('crawler-queue') private readonly crawlerQueue: Queue,
   ) {}

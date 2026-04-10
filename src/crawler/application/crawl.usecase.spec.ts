@@ -1,39 +1,43 @@
-import { CrawlerProvider } from '../interface/crawler.provider';
+import { CrawlQueuePort } from '../domain/port/crawl-queue.port';
 import { CrawlUsecase } from './crawl.usecase';
 
 describe('CrawlUsecase', () => {
   let usecase: CrawlUsecase;
-  let crawlerProvider: jest.Mocked<CrawlerProvider>;
+  let crawlQueuePort: jest.Mocked<CrawlQueuePort>;
 
   beforeEach(() => {
-    crawlerProvider = {
+    crawlQueuePort = {
       enqueue: jest.fn(),
-    } as unknown as jest.Mocked<CrawlerProvider>;
+    };
 
-    usecase = new CrawlUsecase(crawlerProvider);
+    usecase = new CrawlUsecase(crawlQueuePort);
   });
 
   describe('requestCrawl', () => {
     it('주어진 url로 크롤링 작업을 큐에 등록한다', async () => {
       // Given
       const url = 'https://example.com';
-      crawlerProvider.enqueue.mockResolvedValue(undefined);
+      crawlQueuePort.enqueue.mockResolvedValue(undefined);
 
       // When
       await usecase.requestCrawl({ url });
 
       // Then
-      expect(crawlerProvider.enqueue).toHaveBeenCalledTimes(1);
-      expect(crawlerProvider.enqueue).toHaveBeenCalledWith({ url });
+      expect(crawlQueuePort.enqueue).toHaveBeenCalledTimes(1);
+      expect(crawlQueuePort.enqueue).toHaveBeenCalledWith({ url });
     });
 
     it('큐 등록 실패 시 예외를 전파한다', async () => {
       // Given
       const url = 'https://example.com';
-      crawlerProvider.enqueue.mockRejectedValue(new Error('Queue connection failed'));
+      crawlQueuePort.enqueue.mockRejectedValue(
+        new Error('Queue connection failed'),
+      );
 
       // When / Then
-      await expect(usecase.requestCrawl({ url })).rejects.toThrow('Queue connection failed');
+      await expect(usecase.requestCrawl({ url })).rejects.toThrow(
+        'Queue connection failed',
+      );
     });
   });
 });

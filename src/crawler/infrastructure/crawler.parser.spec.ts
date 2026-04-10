@@ -1,15 +1,21 @@
-import { crawlerParser } from './crawler.parser';
+import { CrawlerParser } from './crawler.parser';
 
-describe('crawlerParser', () => {
+describe('CrawlerParser', () => {
+  let crawlerParser: CrawlerParser;
   const TARGET_URL = 'https://example.com';
+
+  beforeEach(() => {
+    crawlerParser = new CrawlerParser();
+  });
 
   describe('title 추출', () => {
     it('HTML에서 title을 추출한다', () => {
       // Given
-      const html = '<html><head><title>Test Page</title></head><body></body></html>';
+      const html =
+        '<html><head><title>Test Page</title></head><body></body></html>';
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then
       expect(result.title).toBe('Test Page');
@@ -20,7 +26,7 @@ describe('crawlerParser', () => {
       const html = '<html><head></head><body></body></html>';
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then
       expect(result.title).toBe('');
@@ -34,7 +40,7 @@ describe('crawlerParser', () => {
         '<html><head><meta name="description" content="페이지 설명입니다."></head></html>';
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then
       expect(result.description).toBe('페이지 설명입니다.');
@@ -45,7 +51,7 @@ describe('crawlerParser', () => {
       const html = '<html><head></head><body></body></html>';
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then
       expect(result.description).toBe('');
@@ -66,7 +72,7 @@ describe('crawlerParser', () => {
       `;
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then — 최초 실행 시 __snapshots__/crawler.parser.spec.ts.snap 파일이 생성되고,
       // 이후 파서 로직 변경 시 스냅샷 불일치로 회귀를 감지한다.
@@ -78,7 +84,7 @@ describe('crawlerParser', () => {
       const html = '<html><head></head><body></body></html>';
 
       // When
-      const result = crawlerParser(html, TARGET_URL);
+      const result = crawlerParser.parse(html, TARGET_URL);
 
       // Then
       expect(result).toMatchSnapshot();
