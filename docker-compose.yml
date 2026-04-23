@@ -3,18 +3,23 @@ services:
     image: postgres:16-alpine
     container_name: idaeri-postgres
     restart: unless-stopped
-    # DATABASE_URL 과 짝을 이루는 고정값. 자격증명을 바꾸고 싶을 땐 여기와 .env 의 DATABASE_URL 을 **함께** 갱신해야 한다.
+    # 자격증명은 .env 에서 interpolation. GitGuardian 등 정적 분석에 하드코딩 credential 을 남기지 않기 위함.
+    # 바꾸고 싶을 땐 .env 의 POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB 와 DATABASE_URL 을 **함께** 갱신해야 한다.
     # 호스트 포트는 로컬에 이미 떠 있는 다른 프로젝트 Postgres (5432/5433) 와 충돌하지 않도록 5434 로 분리한다.
     environment:
-      POSTGRES_USER: idaeri
-      POSTGRES_PASSWORD: idaeri
-      POSTGRES_DB: idaeri
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER 가 .env 에 없음}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 가 .env 에 없음}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB 가 .env 에 없음}
     ports:
       - '5434:5432'
     volumes:
       - idaeri_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U idaeri -d idaeri']
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}',
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
