@@ -1,7 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { Octokit } from '@octokit/rest';
 
-import { GithubErrorCode } from '../domain/github-error-code.enum';
 import { GithubException } from '../domain/github.exception';
 import {
   AssignedTasks,
@@ -10,6 +9,7 @@ import {
   PullRequestDetail,
   PullRequestDiff,
 } from '../domain/github.type';
+import { GithubErrorCode } from '../domain/github-error-code.enum';
 import {
   GetPullRequestDiffOptions,
   GithubClientPort,

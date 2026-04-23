@@ -1,6 +1,5 @@
 import { HttpStatus } from '@nestjs/common';
 
-import { CodeReviewerErrorCode } from '../code-reviewer-error-code.enum';
 import { CodeReviewerException } from '../code-reviewer.exception';
 import {
   ApprovalRecommendation,
@@ -8,6 +7,7 @@ import {
   ReviewCommentDraft,
   RiskLevel,
 } from '../code-reviewer.type';
+import { CodeReviewerErrorCode } from '../code-reviewer-error-code.enum';
 
 const CODE_FENCE_PATTERN = /^```(?:json)?\s*([\s\S]*?)\s*```$/;
 

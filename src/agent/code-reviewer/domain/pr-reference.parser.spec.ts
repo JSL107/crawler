@@ -3,9 +3,7 @@ import { parsePrReference } from './pr-reference.parser';
 
 describe('parsePrReference', () => {
   it('full URL https://github.com/owner/repo/pull/123 을 파싱', () => {
-    const result = parsePrReference(
-      'https://github.com/foo/bar/pull/123',
-    );
+    const result = parsePrReference('https://github.com/foo/bar/pull/123');
     expect(result).toEqual({ repo: 'foo/bar', number: 123 });
   });
 
@@ -15,9 +13,7 @@ describe('parsePrReference', () => {
   });
 
   it('trailing slash 도 허용', () => {
-    const result = parsePrReference(
-      'https://github.com/foo/bar/pull/42/',
-    );
+    const result = parsePrReference('https://github.com/foo/bar/pull/42/');
     expect(result).toEqual({ repo: 'foo/bar', number: 42 });
   });
 

@@ -33,9 +33,7 @@ describe('formatGithubTasksAsPromptSection', () => {
     expect(text).toContain(
       '- Issue #12 (foo/bar) [bug, priority:high]: 크롤러 timeout 버그',
     );
-    expect(text).toContain(
-      '- PR #34 (foo/bar) [draft]: GitHub 커넥터 추가',
-    );
+    expect(text).toContain('- PR #34 (foo/bar) [draft]: GitHub 커넥터 추가');
   });
 
   it('빈 결과면 명시적 안내 문구를 출력 (model 에게 "GitHub 는 없다" 명시)', () => {

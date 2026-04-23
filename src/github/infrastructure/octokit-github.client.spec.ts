@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 
-import { GithubErrorCode } from '../domain/github-error-code.enum';
 import { GithubException } from '../domain/github.exception';
+import { GithubErrorCode } from '../domain/github-error-code.enum';
 import { OctokitGithubClient } from './octokit-github.client';
 
 describe('OctokitGithubClient', () => {
@@ -169,7 +169,14 @@ describe('OctokitGithubClient', () => {
       }
       const { octokit } = buildPrOctokit({
         changedFilesTotalCount: 600,
-        pages: [huge.slice(0, 100), huge.slice(100, 200), huge.slice(200, 300), huge.slice(300, 400), huge.slice(400, 500), huge.slice(500, 600)],
+        pages: [
+          huge.slice(0, 100),
+          huge.slice(100, 200),
+          huge.slice(200, 300),
+          huge.slice(300, 400),
+          huge.slice(400, 500),
+          huge.slice(500, 600),
+        ],
       });
       const client = new OctokitGithubClient(octokit);
 

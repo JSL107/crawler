@@ -330,11 +330,7 @@ export const formatPullRequestReview = ({
   ];
 
   if (review.mustFix.length > 0) {
-    lines.push(
-      '',
-      '*Must-Fix*',
-      ...review.mustFix.map((item) => `• ${item}`),
-    );
+    lines.push('', '*Must-Fix*', ...review.mustFix.map((item) => `• ${item}`));
   }
 
   if (review.niceToHave.length > 0) {

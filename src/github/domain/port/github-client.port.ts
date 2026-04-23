@@ -1,4 +1,8 @@
-import { AssignedTasks, PullRequestDetail, PullRequestDiff } from '../github.type';
+import {
+  AssignedTasks,
+  PullRequestDetail,
+  PullRequestDiff,
+} from '../github.type';
 
 export const GITHUB_CLIENT_PORT = Symbol('GITHUB_CLIENT_PORT');
 

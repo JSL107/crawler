@@ -13,7 +13,8 @@ export const formatGithubTasksAsPromptSection = (
   }
 
   for (const issue of tasks.issues) {
-    const labels = issue.labels.length > 0 ? ` [${issue.labels.join(', ')}]` : '';
+    const labels =
+      issue.labels.length > 0 ? ` [${issue.labels.join(', ')}]` : '';
     lines.push(
       `- Issue #${issue.number} (${issue.repo})${labels}: ${issue.title}`,
     );

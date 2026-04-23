@@ -1,9 +1,10 @@
 import { HttpStatus } from '@nestjs/common';
 
-import { CodeReviewerErrorCode } from './code-reviewer-error-code.enum';
 import { CodeReviewerException } from './code-reviewer.exception';
+import { CodeReviewerErrorCode } from './code-reviewer-error-code.enum';
 
-const URL_PATTERN = /^https?:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)\/?$/;
+const URL_PATTERN =
+  /^https?:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)\/?$/;
 const SHORTHAND_PATTERN = /^([^/\s]+\/[^/\s#]+)#(\d+)$/;
 
 export interface ParsedPrReference {

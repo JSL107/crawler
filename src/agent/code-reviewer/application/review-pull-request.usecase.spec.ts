@@ -6,9 +6,9 @@ import {
   CompletionResponse,
   ModelProviderName,
 } from '../../../model-router/domain/model-router.type';
-import { CodeReviewerErrorCode } from '../domain/code-reviewer-error-code.enum';
 import { CodeReviewerException } from '../domain/code-reviewer.exception';
 import { PullRequestReview } from '../domain/code-reviewer.type';
+import { CodeReviewerErrorCode } from '../domain/code-reviewer-error-code.enum';
 import {
   buildReviewPrompt,
   ReviewPullRequestUsecase,
