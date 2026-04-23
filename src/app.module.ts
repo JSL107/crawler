@@ -7,6 +7,7 @@ import { WorkReviewerModule } from './agent/work-reviewer/work-reviewer.module';
 import { AgentRunModule } from './agent-run/agent-run.module';
 import { validateEnv } from './config/app.config';
 import { CrawlerModule } from './crawler/crawler.module';
+import { GithubModule } from './github/github.module';
 import { ModelRouterModule } from './model-router/model-router.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SlackModule } from './slack/slack.module';
@@ -29,6 +30,7 @@ import { SlackModule } from './slack/slack.module';
     PrismaModule,
     ModelRouterModule,
     AgentRunModule,
+    GithubModule,
     PmAgentModule,
     WorkReviewerModule,
     SlackModule,

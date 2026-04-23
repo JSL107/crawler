@@ -46,6 +46,11 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SLACK_SIGNING_SECRET?: string;
+
+  // GitHub Personal Access Token. 미설정 시 GitHub 커넥터 호출 시점에 친절한 예외로 빠진다 (앱 부팅엔 영향 없음).
+  @IsOptional()
+  @IsString()
+  GITHUB_TOKEN?: string;
 }
 
 export const validateEnv = (config: Record<string, unknown>) => {
