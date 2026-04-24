@@ -61,22 +61,10 @@ export class NotionApiClient implements NotionClientPort {
 
     const tasks: NotionTask[] = [];
     for (const databaseId of targetDbs) {
-      let response: Awaited<ReturnType<Client['databases']['query']>>;
-      try {
-        response = await this.client.databases.query({
-          database_id: databaseId,
-          page_size: perDatabaseLimit,
-        });
-      } catch (error: unknown) {
-        // 한 DB 가 권한 미부여 / not_found 면 그 DB 만 skip + 로그 — 다른 DB 는 계속.
-        this.logger.warn(
-          `Notion DB ${databaseId} 조회 실패 (skip): ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+      const response = await this.queryDbOrNull(databaseId, perDatabaseLimit);
+      if (!response) {
         continue;
       }
-
       for (const page of response.results) {
         if (!isFullPage(page)) {
           continue;
@@ -86,6 +74,27 @@ export class NotionApiClient implements NotionClientPort {
     }
 
     return tasks;
+  }
+
+  // 한 DB 가 권한 미부여 / not_found 면 null 반환 — 다른 DB 는 계속 (listActiveTasks 안에서 skip).
+  // try/catch + null 패턴을 별도 helper 로 추출해 caller 가 let 없이 const 로 받게 한다.
+  private async queryDbOrNull(
+    databaseId: string,
+    perDatabaseLimit: number,
+  ): Promise<Awaited<ReturnType<Client['databases']['query']>> | null> {
+    try {
+      return await this.client!.databases.query({
+        database_id: databaseId,
+        page_size: perDatabaseLimit,
+      });
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Notion DB ${databaseId} 조회 실패 (skip): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
   }
 
   async findOrCreateDailyPage({
@@ -263,21 +272,19 @@ export class NotionApiClient implements NotionClientPort {
   }
 
   private toNotionTask(page: FullPage, databaseId: string): NotionTask {
-    const propertiesEntries: Array<[string, string]> = [];
-    let title = '(제목 없음)';
-    for (const [name, raw] of Object.entries(page.properties)) {
-      if (raw.type === 'title') {
-        const text = collectPlainText(raw.title);
-        if (text.length > 0) {
-          title = text;
-        }
-        continue;
-      }
-      const stringified = propertyToString(raw);
-      if (stringified !== null && stringified.length > 0) {
-        propertiesEntries.push([name, stringified]);
-      }
-    }
+    const entries = Object.entries(page.properties);
+    const titleEntry = entries.find(([, raw]) => raw.type === 'title');
+    const titleText = titleEntry ? collectPlainText(titleEntry[1].title) : '';
+    const title = titleText.length > 0 ? titleText : '(제목 없음)';
+
+    const propertiesEntries = entries
+      .filter(([, raw]) => raw.type !== 'title')
+      .map(([name, raw]) => [name, propertyToString(raw)] as const)
+      .filter(
+        (entry): entry is readonly [string, string] =>
+          entry[1] !== null && entry[1].length > 0,
+      );
+
     return {
       databaseId,
       pageId: page.id,
