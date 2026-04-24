@@ -36,6 +36,7 @@
     "@octokit/rest": "^22.0.1",
     "@prisma/client": "^6.19.3",
     "@slack/bolt": "^4.7.0",
+    "@slack/web-api": "^7.15.1",
     "bullmq": "^5.73.1",
     "cheerio": "^1.2.0",
     "class-transformer": "^0.5.1",

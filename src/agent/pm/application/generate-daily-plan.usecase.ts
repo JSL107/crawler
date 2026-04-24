@@ -10,6 +10,8 @@ import { ListAssignedTasksUsecase } from '../../../github/application/list-assig
 import { AssignedTasks } from '../../../github/domain/github.type';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
 import { AgentType } from '../../../model-router/domain/model-router.type';
+import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
+import { SlackMention } from '../../../slack-collector/domain/slack-collector.type';
 import { DailyReview } from '../../work-reviewer/domain/work-reviewer.type';
 import { PmAgentException } from '../domain/pm-agent.exception';
 import { DailyPlan, GenerateDailyPlanInput } from '../domain/pm-agent.type';
@@ -25,6 +27,9 @@ import {
   coerceToDailyReview,
   formatPreviousDailyReviewSection,
 } from '../domain/prompt/previous-worklog-formatter';
+import { formatSlackMentionsAsPromptSection } from '../domain/prompt/slack-mention-formatter';
+
+const SLACK_MENTION_SINCE_HOURS = 24;
 
 interface PreviousPlanContext {
   plan: DailyPlan;
@@ -46,6 +51,7 @@ export class GenerateDailyPlanUsecase {
     private readonly modelRouter: ModelRouterUsecase,
     private readonly agentRunService: AgentRunService,
     private readonly listAssignedTasksUsecase: ListAssignedTasksUsecase,
+    private readonly listMyMentionsUsecase: ListMyMentionsUsecase,
   ) {}
 
   async execute({
@@ -54,12 +60,14 @@ export class GenerateDailyPlanUsecase {
   }: GenerateDailyPlanInput): Promise<DailyPlan> {
     const userText = tasksText.trim();
 
-    // 외부 컨텍스트 셋 모두 graceful — 실패해도 사용자 입력만으로 계속 진행한다.
-    const [githubTasks, previousPlan, previousWorklog] = await Promise.all([
-      this.fetchGithubTasksOrNull(),
-      this.fetchPreviousPlanOrNull(),
-      this.fetchPreviousWorklogOrNull(),
-    ]);
+    // 외부 컨텍스트 4종 모두 graceful — 실패해도 사용자 입력만으로 계속 진행한다.
+    const [githubTasks, previousPlan, previousWorklog, slackMentions] =
+      await Promise.all([
+        this.fetchGithubTasksOrNull(),
+        this.fetchPreviousPlanOrNull(),
+        this.fetchPreviousWorklogOrNull(),
+        this.fetchSlackMentionsOrEmpty({ slackUserId }),
+      ]);
     const githubItemCount = githubTasks
       ? githubTasks.issues.length + githubTasks.pullRequests.length
       : 0;
@@ -78,6 +86,7 @@ export class GenerateDailyPlanUsecase {
       githubTasks,
       previousPlan,
       previousWorklog,
+      slackMentions,
     });
     const evidence = this.buildEvidence({
       userText,
@@ -85,6 +94,7 @@ export class GenerateDailyPlanUsecase {
       githubTasks,
       previousPlan,
       previousWorklog,
+      slackMentions,
     });
 
     return this.agentRunService.execute({
@@ -102,6 +112,8 @@ export class GenerateDailyPlanUsecase {
         previousWorklogAgentRunId: previousWorklog
           ? previousWorklog.agentRunId
           : null,
+        slackMentionCount: slackMentions.length,
+        slackMentionSinceHours: SLACK_MENTION_SINCE_HOURS,
       },
       evidence,
       run: async () => {
@@ -131,6 +143,25 @@ export class GenerateDailyPlanUsecase {
         `GitHub assigned tasks 수집 실패 (사용자 입력만으로 계속 진행): ${message}`,
       );
       return null;
+    }
+  }
+
+  private async fetchSlackMentionsOrEmpty({
+    slackUserId,
+  }: {
+    slackUserId: string;
+  }): Promise<SlackMention[]> {
+    try {
+      return await this.listMyMentionsUsecase.execute({
+        slackUserId,
+        sinceHours: SLACK_MENTION_SINCE_HOURS,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Slack 멘션 수집 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
+      );
+      return [];
     }
   }
 
@@ -184,11 +215,13 @@ export class GenerateDailyPlanUsecase {
     githubTasks,
     previousPlan,
     previousWorklog,
+    slackMentions,
   }: {
     userText: string;
     githubTasks: AssignedTasks | null;
     previousPlan: PreviousPlanContext | null;
     previousWorklog: PreviousWorklogContext | null;
+    slackMentions: SlackMention[];
   }): string {
     const sections: string[] = [];
     if (previousPlan) {
@@ -207,6 +240,14 @@ export class GenerateDailyPlanUsecase {
         }),
       );
     }
+    if (slackMentions.length > 0) {
+      sections.push(
+        formatSlackMentionsAsPromptSection({
+          mentions: slackMentions,
+          sinceHours: SLACK_MENTION_SINCE_HOURS,
+        }),
+      );
+    }
     if (userText.length > 0) {
       sections.push(`[사용자 입력]\n${userText}`);
     }
@@ -222,12 +263,14 @@ export class GenerateDailyPlanUsecase {
     githubTasks,
     previousPlan,
     previousWorklog,
+    slackMentions,
   }: {
     userText: string;
     slackUserId: string;
     githubTasks: AssignedTasks | null;
     previousPlan: PreviousPlanContext | null;
     previousWorklog: PreviousWorklogContext | null;
+    slackMentions: SlackMention[];
   }): EvidenceInput[] {
     const evidence: EvidenceInput[] = [
       {
@@ -263,6 +306,16 @@ export class GenerateDailyPlanUsecase {
         payload: {
           review: previousWorklog.review as unknown as Record<string, unknown>,
           endedAt: previousWorklog.endedAt.toISOString(),
+        },
+      });
+    }
+    if (slackMentions.length > 0) {
+      evidence.push({
+        sourceType: 'SLACK_MENTIONS',
+        sourceId: slackUserId,
+        payload: {
+          sinceHours: SLACK_MENTION_SINCE_HOURS,
+          mentions: slackMentions as unknown as Record<string, unknown>[],
         },
       });
     }

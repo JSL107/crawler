@@ -11,6 +11,7 @@ import { CrawlerModule } from './crawler/crawler.module';
 import { GithubModule } from './github/github.module';
 import { ModelRouterModule } from './model-router/model-router.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { SlackCollectorModule } from './slack-collector/slack-collector.module';
 import { SlackModule } from './slack/slack.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { SlackModule } from './slack/slack.module';
     ModelRouterModule,
     AgentRunModule,
     GithubModule,
+    SlackCollectorModule,
     PmAgentModule,
     WorkReviewerModule,
     CodeReviewerModule,

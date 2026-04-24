@@ -6,6 +6,7 @@ import {
   CompletionResponse,
   ModelProviderName,
 } from '../../../model-router/domain/model-router.type';
+import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
 import { PmAgentException } from '../domain/pm-agent.exception';
 import { DailyPlan } from '../domain/pm-agent.type';
 import { PmAgentErrorCode } from '../domain/pm-agent-error-code.enum';
@@ -25,6 +26,7 @@ describe('GenerateDailyPlanUsecase', () => {
   let agentRunServiceExecute: jest.Mock;
   let agentRunServiceFindLatest: jest.Mock;
   let listAssignedTasksExecute: jest.Mock;
+  let listMyMentionsExecute: jest.Mock;
   let usecase: GenerateDailyPlanUsecase;
 
   beforeEach(() => {
@@ -35,6 +37,7 @@ describe('GenerateDailyPlanUsecase', () => {
     });
     agentRunServiceFindLatest = jest.fn().mockResolvedValue(null);
     listAssignedTasksExecute = jest.fn();
+    listMyMentionsExecute = jest.fn().mockResolvedValue([]);
 
     usecase = new GenerateDailyPlanUsecase(
       modelRouter as unknown as ModelRouterUsecase,
@@ -45,6 +48,9 @@ describe('GenerateDailyPlanUsecase', () => {
       {
         execute: listAssignedTasksExecute,
       } as unknown as ListAssignedTasksUsecase,
+      {
+        execute: listMyMentionsExecute,
+      } as unknown as ListMyMentionsUsecase,
     );
 
     modelRouter.route.mockResolvedValue({
@@ -462,6 +468,85 @@ describe('GenerateDailyPlanUsecase', () => {
       expect(result).toEqual(validPlan);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.previousWorklogReferenced).toBe(false);
+    });
+  });
+
+  describe('Slack mention 수집 (입력 b)', () => {
+    const mention = {
+      channelId: 'C1',
+      channelName: 'general',
+      channelType: 'public_channel' as const,
+      authorUserId: 'U999',
+      ts: '1.0',
+      text: '<@U123> 도와주세요',
+      permalink: undefined,
+    };
+
+    it('mention 이 있으면 prompt 에 [Slack 에서 본인 멘션 ...] 섹션 + evidence SLACK_MENTIONS 추가', async () => {
+      listMyMentionsExecute.mockResolvedValue([mention]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U123' });
+
+      expect(listMyMentionsExecute).toHaveBeenCalledWith({
+        slackUserId: 'U123',
+        sinceHours: 24,
+      });
+
+      const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
+      expect(promptArg).toContain('Slack 에서 본인 멘션된 최근 메시지');
+      expect(promptArg).toContain('도와주세요');
+
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.slackMentionCount).toBe(1);
+      expect(call.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceType: 'SLACK_MENTIONS',
+            sourceId: 'U123',
+          }),
+        ]),
+      );
+    });
+
+    it('mention 이 비어있으면 prompt 섹션 / evidence 모두 생략', async () => {
+      listMyMentionsExecute.mockResolvedValue([]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U' });
+
+      const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
+      expect(promptArg).not.toContain('Slack 에서 본인 멘션');
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.slackMentionCount).toBe(0);
+      expect(call.evidence).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sourceType: 'SLACK_MENTIONS' }),
+        ]),
+      );
+    });
+
+    it('Slack 호출 실패해도 graceful (mention 없는 채로 계속)', async () => {
+      listMyMentionsExecute.mockRejectedValue(new Error('SCOPE_MISSING'));
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      const result = await usecase.execute({
+        tasksText: 'x',
+        slackUserId: 'U',
+      });
+
+      expect(result).toEqual(validPlan);
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.slackMentionCount).toBe(0);
     });
   });
 });
