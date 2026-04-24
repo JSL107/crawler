@@ -1,7 +1,7 @@
 import { buildClaudeArgs, parseClaudeJsonOutput } from './claude-cli.provider';
 
 describe('buildClaudeArgs', () => {
-  it('기본 플래그는 print / output-format json / no-session-persistence 를 포함한다', () => {
+  it('기본 플래그는 print / output-format json / no-session-persistence / model opus 를 포함한다', () => {
     const args = buildClaudeArgs({});
     expect(args).toEqual(
       expect.arrayContaining([
@@ -9,8 +9,17 @@ describe('buildClaudeArgs', () => {
         '--output-format',
         'json',
         '--no-session-persistence',
+        '--model',
+        'opus',
       ]),
     );
+  });
+
+  it('model 옵션을 넘기면 해당 모델로 지정한다 (env override 경로)', () => {
+    const args = buildClaudeArgs({ model: 'sonnet' });
+    expect(args).toContain('--model');
+    expect(args).toContain('sonnet');
+    expect(args).not.toContain('opus');
   });
 
   it('--bare 는 포함하지 않는다 (keychain/OAuth 인증 유지)', () => {

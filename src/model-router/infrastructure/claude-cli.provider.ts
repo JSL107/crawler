@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import {
   CompletionRequest,
@@ -24,12 +25,25 @@ const STREAM_TAIL_LIMIT = 2000;
 // - 프롬프트는 argv 가 아니라 **stdin 으로 전달** — argv 는 `ps aux` 로 유출될 수 있음 + ARG_MAX 회피.
 // - cwd / HOME 모두 throwaway 임시 디렉토리로 격리해 prompt-injected agent 의 repo / ~/.ssh 접근을 차단.
 
+// 이대리가 Claude 를 쓰는 건 개발형 에이전트 (BE, Code Reviewer) 뿐이라 기본 `opus` 로 격상.
+// 구독 quota 소진 우려가 있으면 env 로 `sonnet` / `haiku` override 가능.
+const DEFAULT_CLAUDE_MODEL = 'opus';
+
 export const buildClaudeArgs = ({
   systemPrompt,
+  model = DEFAULT_CLAUDE_MODEL,
 }: {
   systemPrompt?: string;
+  model?: string;
 }): string[] => {
-  const args = ['-p', '--output-format', 'json', '--no-session-persistence'];
+  const args = [
+    '-p',
+    '--output-format',
+    'json',
+    '--no-session-persistence',
+    '--model',
+    model,
+  ];
   if (systemPrompt) {
     args.push('--system-prompt', systemPrompt);
   }
@@ -62,12 +76,18 @@ export class ClaudeCliProvider implements ModelProviderPort {
   private readonly logger = new Logger(ClaudeCliProvider.name);
   private readonly timeoutMs: number = CLAUDE_DEFAULT_TIMEOUT_MS;
 
+  constructor(private readonly configService: ConfigService) {}
+
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     const workDir = await mkdtemp(join(tmpdir(), 'idaeri-claude-'));
     const homeDir = await mkdtemp(join(tmpdir(), 'idaeri-claude-home-'));
 
     try {
-      const args = buildClaudeArgs({ systemPrompt: request.systemPrompt });
+      const model = this.configService.get<string>('CLAUDE_MODEL')?.trim();
+      const args = buildClaudeArgs({
+        systemPrompt: request.systemPrompt,
+        model: model && model.length > 0 ? model : undefined,
+      });
       const stdout = await this.spawnClaude({
         args,
         cwd: workDir,
