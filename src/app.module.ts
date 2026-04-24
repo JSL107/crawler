@@ -10,9 +10,10 @@ import { validateEnv } from './config/app.config';
 import { CrawlerModule } from './crawler/crawler.module';
 import { GithubModule } from './github/github.module';
 import { ModelRouterModule } from './model-router/model-router.module';
+import { NotionModule } from './notion/notion.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { SlackCollectorModule } from './slack-collector/slack-collector.module';
 import { SlackModule } from './slack/slack.module';
+import { SlackCollectorModule } from './slack-collector/slack-collector.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { SlackModule } from './slack/slack.module';
     ModelRouterModule,
     AgentRunModule,
     GithubModule,
+    NotionModule,
     SlackCollectorModule,
     PmAgentModule,
     WorkReviewerModule,

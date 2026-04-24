@@ -1,7 +1,7 @@
 import { WebClient } from '@slack/web-api';
 
-import { SlackCollectorErrorCode } from '../domain/slack-collector-error-code.enum';
 import { SlackCollectorException } from '../domain/slack-collector.exception';
+import { SlackCollectorErrorCode } from '../domain/slack-collector-error-code.enum';
 import { SlackWebApiCollector } from './slack-web-api.collector';
 
 describe('SlackWebApiCollector', () => {
@@ -17,9 +17,11 @@ describe('SlackWebApiCollector', () => {
         conversations: jest.fn().mockResolvedValue({ channels: conversations }),
       },
       conversations: {
-        history: jest.fn().mockImplementation(({ channel }) =>
-          Promise.resolve({ messages: historyByChannel[channel] ?? [] }),
-        ),
+        history: jest
+          .fn()
+          .mockImplementation(({ channel }) =>
+            Promise.resolve({ messages: historyByChannel[channel] ?? [] }),
+          ),
       },
     }) as unknown as WebClient;
 
@@ -70,22 +72,18 @@ describe('SlackWebApiCollector', () => {
   });
 
   it('한 채널의 history 가 throw 해도 다른 채널은 계속 수집', async () => {
-    const conversations = jest
-      .fn()
-      .mockResolvedValue({
-        channels: [
-          { id: 'C1', is_private: false },
-          { id: 'C2', is_private: true, name: 'secret' },
-        ],
-      });
+    const conversations = jest.fn().mockResolvedValue({
+      channels: [
+        { id: 'C1', is_private: false },
+        { id: 'C2', is_private: true, name: 'secret' },
+      ],
+    });
     const history = jest.fn().mockImplementation(({ channel }) => {
       if (channel === 'C1') {
         return Promise.reject(new Error('not_in_channel'));
       }
       return Promise.resolve({
-        messages: [
-          { text: '<@U> here', user: 'U2', ts: '1.0' },
-        ],
+        messages: [{ text: '<@U> here', user: 'U2', ts: '1.0' }],
       });
     });
     const client = {

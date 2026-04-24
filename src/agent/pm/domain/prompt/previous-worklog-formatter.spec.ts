@@ -25,7 +25,9 @@ describe('formatPreviousDailyReviewSection', () => {
       endedAt: new Date('2026-04-23T08:00:00Z'),
     });
 
-    expect(text).toContain('[직전 Work Reviewer 실행 (2026-04-23T08:00:00.000Z)');
+    expect(text).toContain(
+      '[직전 Work Reviewer 실행 (2026-04-23T08:00:00.000Z)',
+    );
     expect(text).toContain('- 요약: Phase 4 Code Reviewer 구현');
     expect(text).toContain('- 정량 근거:');
     expect(text).toContain('  - unit test +31건');

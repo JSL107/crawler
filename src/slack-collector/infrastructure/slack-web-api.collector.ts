@@ -1,14 +1,14 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { WebClient } from '@slack/web-api';
 
-import { SlackCollectorErrorCode } from '../domain/slack-collector-error-code.enum';
-import { SlackCollectorException } from '../domain/slack-collector.exception';
-import { SlackMention } from '../domain/slack-collector.type';
 import {
   ListMyMentionsOptions,
   SLACK_WEB_CLIENT,
   SlackCollectorPort,
 } from '../domain/port/slack-collector.port';
+import { SlackCollectorException } from '../domain/slack-collector.exception';
+import { SlackMention } from '../domain/slack-collector.type';
+import { SlackCollectorErrorCode } from '../domain/slack-collector-error-code.enum';
 
 const DEFAULT_SINCE_HOURS = 24;
 const DEFAULT_MAX_CHANNELS = 100;
@@ -65,9 +65,7 @@ export class SlackWebApiCollector implements SlackCollectorPort {
       if (!channel.id) {
         continue;
       }
-      let history: Awaited<
-        ReturnType<WebClient['conversations']['history']>
-      >;
+      let history: Awaited<ReturnType<WebClient['conversations']['history']>>;
       try {
         history = await this.client.conversations.history({
           channel: channel.id,

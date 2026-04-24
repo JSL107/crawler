@@ -10,6 +10,8 @@ import { ListAssignedTasksUsecase } from '../../../github/application/list-assig
 import { AssignedTasks } from '../../../github/domain/github.type';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
 import { AgentType } from '../../../model-router/domain/model-router.type';
+import { ListActiveTasksUsecase } from '../../../notion/application/list-active-tasks.usecase';
+import { NotionTask } from '../../../notion/domain/notion.type';
 import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
 import { SlackMention } from '../../../slack-collector/domain/slack-collector.type';
 import { DailyReview } from '../../work-reviewer/domain/work-reviewer.type';
@@ -18,6 +20,7 @@ import { DailyPlan, GenerateDailyPlanInput } from '../domain/pm-agent.type';
 import { PmAgentErrorCode } from '../domain/pm-agent-error-code.enum';
 import { parseDailyPlan } from '../domain/prompt/daily-plan.parser';
 import { formatGithubTasksAsPromptSection } from '../domain/prompt/github-task-formatter';
+import { formatNotionTasksAsPromptSection } from '../domain/prompt/notion-task-formatter';
 import { PM_SYSTEM_PROMPT } from '../domain/prompt/pm-system.prompt';
 import {
   coerceToDailyPlan,
@@ -52,6 +55,7 @@ export class GenerateDailyPlanUsecase {
     private readonly agentRunService: AgentRunService,
     private readonly listAssignedTasksUsecase: ListAssignedTasksUsecase,
     private readonly listMyMentionsUsecase: ListMyMentionsUsecase,
+    private readonly listActiveTasksUsecase: ListActiveTasksUsecase,
   ) {}
 
   async execute({
@@ -60,23 +64,33 @@ export class GenerateDailyPlanUsecase {
   }: GenerateDailyPlanInput): Promise<DailyPlan> {
     const userText = tasksText.trim();
 
-    // 외부 컨텍스트 4종 모두 graceful — 실패해도 사용자 입력만으로 계속 진행한다.
-    const [githubTasks, previousPlan, previousWorklog, slackMentions] =
-      await Promise.all([
-        this.fetchGithubTasksOrNull(),
-        this.fetchPreviousPlanOrNull(),
-        this.fetchPreviousWorklogOrNull(),
-        this.fetchSlackMentionsOrEmpty({ slackUserId }),
-      ]);
+    // 외부 컨텍스트 5종 모두 graceful — 실패해도 사용자 입력만으로 계속 진행한다.
+    const [
+      githubTasks,
+      previousPlan,
+      previousWorklog,
+      slackMentions,
+      notionTasks,
+    ] = await Promise.all([
+      this.fetchGithubTasksOrNull(),
+      this.fetchPreviousPlanOrNull(),
+      this.fetchPreviousWorklogOrNull(),
+      this.fetchSlackMentionsOrEmpty({ slackUserId }),
+      this.fetchNotionTasksOrEmpty(),
+    ]);
     const githubItemCount = githubTasks
       ? githubTasks.issues.length + githubTasks.pullRequests.length
       : 0;
 
-    if (userText.length === 0 && githubItemCount === 0) {
+    if (
+      userText.length === 0 &&
+      githubItemCount === 0 &&
+      notionTasks.length === 0
+    ) {
       throw new PmAgentException({
         code: PmAgentErrorCode.EMPTY_TASKS_INPUT,
         message:
-          '오늘 할 일이 비어있고 GitHub 자동 수집도 비어있습니다. `/today <할 일>` 형식으로 입력하거나 GITHUB_TOKEN 을 설정해주세요.',
+          '오늘 할 일이 비어있고 GitHub / Notion 자동 수집도 비어있습니다. `/today <할 일>` 형식으로 입력하거나 GITHUB_TOKEN / NOTION_TOKEN 을 설정해주세요.',
         status: HttpStatus.BAD_REQUEST,
       });
     }
@@ -87,6 +101,7 @@ export class GenerateDailyPlanUsecase {
       previousPlan,
       previousWorklog,
       slackMentions,
+      notionTasks,
     });
     const evidence = this.buildEvidence({
       userText,
@@ -95,6 +110,7 @@ export class GenerateDailyPlanUsecase {
       previousPlan,
       previousWorklog,
       slackMentions,
+      notionTasks,
     });
 
     return this.agentRunService.execute({
@@ -114,6 +130,7 @@ export class GenerateDailyPlanUsecase {
           : null,
         slackMentionCount: slackMentions.length,
         slackMentionSinceHours: SLACK_MENTION_SINCE_HOURS,
+        notionTaskCount: notionTasks.length,
       },
       evidence,
       run: async () => {
@@ -160,6 +177,18 @@ export class GenerateDailyPlanUsecase {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
         `Slack 멘션 수집 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
+      );
+      return [];
+    }
+  }
+
+  private async fetchNotionTasksOrEmpty(): Promise<NotionTask[]> {
+    try {
+      return await this.listActiveTasksUsecase.execute();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Notion task 수집 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
       );
       return [];
     }
@@ -216,12 +245,14 @@ export class GenerateDailyPlanUsecase {
     previousPlan,
     previousWorklog,
     slackMentions,
+    notionTasks,
   }: {
     userText: string;
     githubTasks: AssignedTasks | null;
     previousPlan: PreviousPlanContext | null;
     previousWorklog: PreviousWorklogContext | null;
     slackMentions: SlackMention[];
+    notionTasks: NotionTask[];
   }): string {
     const sections: string[] = [];
     if (previousPlan) {
@@ -254,6 +285,9 @@ export class GenerateDailyPlanUsecase {
     if (githubTasks) {
       sections.push(formatGithubTasksAsPromptSection(githubTasks));
     }
+    if (notionTasks.length > 0) {
+      sections.push(formatNotionTasksAsPromptSection(notionTasks));
+    }
     return sections.join('\n\n');
   }
 
@@ -264,6 +298,7 @@ export class GenerateDailyPlanUsecase {
     previousPlan,
     previousWorklog,
     slackMentions,
+    notionTasks,
   }: {
     userText: string;
     slackUserId: string;
@@ -271,6 +306,7 @@ export class GenerateDailyPlanUsecase {
     previousPlan: PreviousPlanContext | null;
     previousWorklog: PreviousWorklogContext | null;
     slackMentions: SlackMention[];
+    notionTasks: NotionTask[];
   }): EvidenceInput[] {
     const evidence: EvidenceInput[] = [
       {
@@ -316,6 +352,15 @@ export class GenerateDailyPlanUsecase {
         payload: {
           sinceHours: SLACK_MENTION_SINCE_HOURS,
           mentions: slackMentions as unknown as Record<string, unknown>[],
+        },
+      });
+    }
+    if (notionTasks.length > 0) {
+      evidence.push({
+        sourceType: 'NOTION_TASKS',
+        sourceId: 'me',
+        payload: {
+          tasks: notionTasks as unknown as Record<string, unknown>[],
         },
       });
     }

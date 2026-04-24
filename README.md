@@ -12,7 +12,9 @@ GitHub / Notion / Postman / Slack 등을 연결해 PM · BE · Code Reviewer · 
 - ✅ Model Router (`src/model-router/`) — Port 인터페이스 + **CodexCliProvider (ChatGPT) / ClaudeCliProvider (Claude)** + Mock (Gemini), 에이전트→모델 라우팅 매핑 + cwd·env allowlist 격리
 - ✅ AgentRun 라이프사이클 (`src/agent-run/`) — `AgentRunService.execute({ begin → run → finish })` 템플릿, EvidenceRecord 자동 기록
 - ✅ GitHub 커넥터 (`src/github/`) — Octokit 기반 read-only, PAT 미설정 시 graceful fallback
-- ✅ PM Agent (`src/agent/pm/`) — `/today` 슬래시 커맨드, DailyPlan JSON 스키마 파서, GitHub assigned issue/PR 자동 evidence 수집
+- ✅ Slack collector (`src/slack-collector/`) — WebClient 기반, 본인 멘션 24h 수집 (PM blocker 후보)
+- ✅ Notion 커넥터 (`src/notion/`) — @notionhq/client v2 기반 read-only, 다중 DB 지원, integration token + DB 권한 부여 필요
+- ✅ PM Agent (`src/agent/pm/`) — `/today` 슬래시 커맨드. 입력 5종 graceful 통합: 사용자 텍스트 + GitHub assigned + 전일 PM plan + 전일 worklog + Slack 멘션 + Notion task
 - ✅ Work Reviewer (`src/agent/work-reviewer/`) — `/worklog` 슬래시 커맨드, DailyReview JSON 스키마 파서 (정량 근거 + 개선 전/후 + 다음 액션 + 한 줄 성과)
 - ✅ Code Reviewer (`src/agent/code-reviewer/`) — `/review-pr <URL or owner/repo#N>` 슬래시 커맨드, GitHub diff 가져와 Claude CLI 가 must-fix / nice-to-have / missing-tests / 리뷰 코멘트 초안 생성
 - ✅ 크롤러 도메인 (`src/crawler/`) — Port-Adapter 구조, BullMQ 큐, Puppeteer + Cheerio
@@ -102,6 +104,7 @@ pnpm format:check          # Prettier 검사
 | `DATABASE_URL` | ✅ | PostgreSQL 연결 문자열 (Prisma). 앱 부팅 시 config 검증과 Prisma CLI(`db:push` / `db:studio`) 에서 요구. `pnpm install` 의 `prisma generate` 는 schema 파싱만 하므로 DATABASE_URL 없이도 성공. 실제 DB 연결은 PrismaService 의 lazy connect 로 처리. `POSTGRES_*` 자격증명 + 호스트 포트 5434 와 짝을 이룬다. 로컬에 이미 상주 중인 타 프로젝트 5432/5433/6379/6380 점유자와 충돌을 피하기 위한 전용 포트. Redis 도 동일하게 `REDIS_PORT=6381`. |
 | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_SIGNING_SECRET` | ⭕ | Slack 봇 기동용 (Socket Mode). 3개 모두 설정된 경우에만 Slack 봇 기동, 하나라도 비면 앱은 정상 부팅하되 Slack 기능만 비활성화. |
 | `GITHUB_TOKEN` | ⭕ | GitHub Personal Access Token (classic, scope: `repo` + `read:user`). 미설정 시 `/today` 의 evidence 자동 수집은 graceful skip, `/review-pr` 은 호출 시 GITHUB_TOKEN_NOT_CONFIGURED 예외. 발급: https://github.com/settings/tokens |
+| `NOTION_TOKEN` / `NOTION_TASK_DB_IDS` | ⭕ | Notion internal integration token (`secret_...` 또는 `ntn_...`) + 콤마 구분 DB ID 리스트. 각 DB 페이지에서 integration 에 명시 권한 부여 필요(... → Connections → integration 추가). 미설정 시 `/today` 의 Notion evidence 자동 수집은 graceful skip. 발급: https://www.notion.so/my-integrations |
 
 > 설치와 `.env` 생성 순서는 서로 독립적입니다. `pnpm install` 은 DATABASE_URL 없이도 성공하지만, `pnpm dev` / `pnpm db:push` 이전에는 반드시 `.env` 가 준비돼야 합니다.
 

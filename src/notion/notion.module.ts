@@ -1,0 +1,34 @@
+import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Client } from '@notionhq/client';
+
+import { ListActiveTasksUsecase } from './application/list-active-tasks.usecase';
+import {
+  NOTION_CLIENT_INSTANCE,
+  NOTION_CLIENT_PORT,
+} from './domain/port/notion-client.port';
+import { NotionApiClient } from './infrastructure/notion-api.client';
+
+@Module({
+  providers: [
+    ListActiveTasksUsecase,
+    {
+      // Notion Client factory — NOTION_TOKEN 미설정 시 null. 호출 시점에 친절한 예외.
+      provide: NOTION_CLIENT_INSTANCE,
+      useFactory: (configService: ConfigService): Client | null => {
+        const token = configService.get<string>('NOTION_TOKEN');
+        if (!token) {
+          return null;
+        }
+        return new Client({ auth: token });
+      },
+      inject: [ConfigService],
+    },
+    {
+      provide: NOTION_CLIENT_PORT,
+      useClass: NotionApiClient,
+    },
+  ],
+  exports: [ListActiveTasksUsecase],
+})
+export class NotionModule {}

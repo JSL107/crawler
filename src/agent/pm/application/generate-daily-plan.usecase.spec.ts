@@ -6,6 +6,7 @@ import {
   CompletionResponse,
   ModelProviderName,
 } from '../../../model-router/domain/model-router.type';
+import { ListActiveTasksUsecase } from '../../../notion/application/list-active-tasks.usecase';
 import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
 import { PmAgentException } from '../domain/pm-agent.exception';
 import { DailyPlan } from '../domain/pm-agent.type';
@@ -27,6 +28,7 @@ describe('GenerateDailyPlanUsecase', () => {
   let agentRunServiceFindLatest: jest.Mock;
   let listAssignedTasksExecute: jest.Mock;
   let listMyMentionsExecute: jest.Mock;
+  let listActiveTasksExecute: jest.Mock;
   let usecase: GenerateDailyPlanUsecase;
 
   beforeEach(() => {
@@ -38,6 +40,7 @@ describe('GenerateDailyPlanUsecase', () => {
     agentRunServiceFindLatest = jest.fn().mockResolvedValue(null);
     listAssignedTasksExecute = jest.fn();
     listMyMentionsExecute = jest.fn().mockResolvedValue([]);
+    listActiveTasksExecute = jest.fn().mockResolvedValue([]);
 
     usecase = new GenerateDailyPlanUsecase(
       modelRouter as unknown as ModelRouterUsecase,
@@ -51,6 +54,9 @@ describe('GenerateDailyPlanUsecase', () => {
       {
         execute: listMyMentionsExecute,
       } as unknown as ListMyMentionsUsecase,
+      {
+        execute: listActiveTasksExecute,
+      } as unknown as ListActiveTasksUsecase,
     );
 
     modelRouter.route.mockResolvedValue({
@@ -547,6 +553,110 @@ describe('GenerateDailyPlanUsecase', () => {
       expect(result).toEqual(validPlan);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.slackMentionCount).toBe(0);
+    });
+  });
+
+  describe('Notion task 수집 (입력 c)', () => {
+    const notionTask = {
+      databaseId: 'DB1',
+      pageId: 'p1',
+      url: 'https://notion.so/p1',
+      title: '버그 수정',
+      properties: { 상태: '진행중', 우선순위: '높음' },
+    };
+
+    it('notionTasks 가 있으면 prompt 에 [Notion task DB ...] + evidence NOTION_TASKS', async () => {
+      listActiveTasksExecute.mockResolvedValue([notionTask]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U' });
+
+      const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
+      expect(promptArg).toContain('[Notion task DB');
+      expect(promptArg).toContain('"버그 수정"');
+      expect(promptArg).toContain('상태: 진행중');
+
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.notionTaskCount).toBe(1);
+      expect(call.evidence).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceType: 'NOTION_TASKS',
+            sourceId: 'me',
+          }),
+        ]),
+      );
+    });
+
+    it('notionTasks 가 비어있으면 prompt 섹션 / evidence 모두 생략', async () => {
+      listActiveTasksExecute.mockResolvedValue([]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U' });
+
+      const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
+      expect(promptArg).not.toContain('[Notion task DB');
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.notionTaskCount).toBe(0);
+      expect(call.evidence).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sourceType: 'NOTION_TASKS' }),
+        ]),
+      );
+    });
+
+    it('Notion 호출 실패해도 graceful (task 없는 채로 계속)', async () => {
+      listActiveTasksExecute.mockRejectedValue(
+        new Error('NOTION_TOKEN_NOT_CONFIGURED'),
+      );
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      const result = await usecase.execute({
+        tasksText: 'x',
+        slackUserId: 'U',
+      });
+
+      expect(result).toEqual(validPlan);
+      const call = agentRunServiceExecute.mock.calls[0][0];
+      expect(call.inputSnapshot.notionTaskCount).toBe(0);
+    });
+
+    it('userText / GitHub 비어 있어도 Notion task 만 있으면 정상 처리', async () => {
+      listActiveTasksExecute.mockResolvedValue([notionTask]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      const result = await usecase.execute({
+        tasksText: '',
+        slackUserId: 'U',
+      });
+
+      expect(result).toEqual(validPlan);
+    });
+
+    it('userText / GitHub / Notion 모두 비어 있으면 EMPTY_TASKS_INPUT 예외', async () => {
+      listActiveTasksExecute.mockResolvedValue([]);
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await expect(
+        usecase.execute({ tasksText: '   ', slackUserId: 'U' }),
+      ).rejects.toMatchObject({
+        pmAgentErrorCode: PmAgentErrorCode.EMPTY_TASKS_INPUT,
+      });
     });
   });
 });
