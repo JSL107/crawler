@@ -51,6 +51,21 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   GITHUB_TOKEN?: string;
+
+  // Notion integration token + 조회할 task DB ID 콤마 구분 리스트.
+  // 미설정 시 Notion 커넥터 호출 시 친절한 예외 (앱 부팅엔 영향 없음).
+  @IsOptional()
+  @IsString()
+  NOTION_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  NOTION_TASK_DB_IDS?: string;
+
+  // Daily Plan write back 용 별도 DB (선택). 미설정 시 NOTION_TASK_DB_IDS 첫 번째 DB 를 재사용.
+  @IsOptional()
+  @IsString()
+  NOTION_DAILY_PLAN_DATABASE_ID?: string;
 }
 
 export const validateEnv = (config: Record<string, unknown>) => {

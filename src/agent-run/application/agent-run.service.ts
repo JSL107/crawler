@@ -15,15 +15,21 @@ import {
 export interface AgentRunExecutionResult<T> {
   result: T;
   modelUsed: string;
-  output: Record<string, unknown>;
+  // output 은 JSON 직렬화 가능한 임의 데이터 — domain 객체 그대로 전달 가능.
+  // Prisma 저장 경계에서만 InputJsonValue 로 cast.
+  output: unknown;
+}
+
+export interface AgentRunContext {
+  agentRunId: number;
 }
 
 export interface ExecuteAgentRunInput<T> {
   agentType: AgentType;
   triggerType: TriggerType;
-  inputSnapshot: Record<string, unknown>;
+  inputSnapshot: unknown;
   evidence?: EvidenceInput[];
-  run: () => Promise<AgentRunExecutionResult<T>>;
+  run: (context: AgentRunContext) => Promise<AgentRunExecutionResult<T>>;
 }
 
 // 모든 에이전트 유스케이스가 공유할 AgentRun 라이프사이클 템플릿.
@@ -57,7 +63,7 @@ export class AgentRunService {
         await this.repository.recordEvidence({ agentRunId: id, ...entry });
       }
 
-      const execution = await run();
+      const execution = await run({ agentRunId: id });
 
       await this.repository.finish({
         id,

@@ -1,4 +1,5 @@
 import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import { DailyPlanService } from '../../../daily-plan/application/daily-plan.service';
 import { ListAssignedTasksUsecase } from '../../../github/application/list-assigned-tasks.usecase';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
 import {
@@ -6,18 +7,34 @@ import {
   CompletionResponse,
   ModelProviderName,
 } from '../../../model-router/domain/model-router.type';
+import { AppendDailyPlanUsecase } from '../../../notion/application/append-daily-plan.usecase';
 import { ListActiveTasksUsecase } from '../../../notion/application/list-active-tasks.usecase';
 import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
 import { PmAgentException } from '../domain/pm-agent.exception';
-import { DailyPlan } from '../domain/pm-agent.type';
+import { DailyPlan, TaskItem } from '../domain/pm-agent.type';
 import { PmAgentErrorCode } from '../domain/pm-agent-error-code.enum';
+
+const task = (title: string, overrides: Partial<TaskItem> = {}): TaskItem => ({
+  id: overrides.id ?? `user:${title}`,
+  title,
+  source: overrides.source ?? 'USER_INPUT',
+  subtasks: overrides.subtasks ?? [],
+  isCriticalPath: overrides.isCriticalPath ?? false,
+});
+import { DailyPlanContextCollector } from './daily-plan-context.collector';
+import { DailyPlanEvidenceBuilder } from './daily-plan-evidence.builder';
+import { DailyPlanPromptBuilder } from './daily-plan-prompt.builder';
 import { GenerateDailyPlanUsecase } from './generate-daily-plan.usecase';
 
 describe('GenerateDailyPlanUsecase', () => {
   const validPlan: DailyPlan = {
-    topPriority: 'PM Agent /today 구현',
-    morning: ['agent-run 모듈', 'PM 유스케이스'],
-    afternoon: ['Slack 핸들러', 'E2E 검증'],
+    topPriority: task('PM Agent /today 구현', { isCriticalPath: true }),
+    varianceAnalysis: {
+      rolledOverTasks: [],
+      analysisReasoning: '(이월 없음)',
+    },
+    morning: [task('agent-run 모듈'), task('PM 유스케이스')],
+    afternoon: [task('Slack 핸들러'), task('E2E 검증')],
     blocker: null,
     estimatedHours: 6,
     reasoning: '집중이 필요한 구현을 오전에 배치',
@@ -26,6 +43,8 @@ describe('GenerateDailyPlanUsecase', () => {
   let modelRouter: { route: jest.Mock };
   let agentRunServiceExecute: jest.Mock;
   let agentRunServiceFindLatest: jest.Mock;
+  let dailyPlanRecord: jest.Mock;
+  let appendDailyPlanExecute: jest.Mock;
   let listAssignedTasksExecute: jest.Mock;
   let listMyMentionsExecute: jest.Mock;
   let listActiveTasksExecute: jest.Mock;
@@ -34,29 +53,56 @@ describe('GenerateDailyPlanUsecase', () => {
   beforeEach(() => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
-      const execution = await input.run();
+      const execution = await input.run({ agentRunId: 42 });
       return execution.result;
     });
     agentRunServiceFindLatest = jest.fn().mockResolvedValue(null);
+    dailyPlanRecord = jest.fn().mockResolvedValue({
+      id: 1,
+      planDate: new Date('2026-04-24'),
+      plan: validPlan,
+      agentRunId: 42,
+      evidenceIds: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    appendDailyPlanExecute = jest.fn().mockResolvedValue({
+      pageId: 'p_fake',
+      url: 'https://notion.so/p_fake',
+    });
     listAssignedTasksExecute = jest.fn();
     listMyMentionsExecute = jest.fn().mockResolvedValue([]);
     listActiveTasksExecute = jest.fn().mockResolvedValue([]);
 
-    usecase = new GenerateDailyPlanUsecase(
-      modelRouter as unknown as ModelRouterUsecase,
-      {
-        execute: agentRunServiceExecute,
-        findLatestSucceededRun: agentRunServiceFindLatest,
-      } as unknown as AgentRunService,
+    const agentRunService = {
+      execute: agentRunServiceExecute,
+      findLatestSucceededRun: agentRunServiceFindLatest,
+    } as unknown as AgentRunService;
+
+    // builder 3종은 실제 인스턴스 — 내부 로직 (fetch/prompt/evidence) 을 그대로 통합 검증.
+    const contextCollector = new DailyPlanContextCollector(
+      agentRunService,
       {
         execute: listAssignedTasksExecute,
       } as unknown as ListAssignedTasksUsecase,
+      { execute: listMyMentionsExecute } as unknown as ListMyMentionsUsecase,
+      { execute: listActiveTasksExecute } as unknown as ListActiveTasksUsecase,
+    );
+    const promptBuilder = new DailyPlanPromptBuilder();
+    const evidenceBuilder = new DailyPlanEvidenceBuilder();
+
+    usecase = new GenerateDailyPlanUsecase(
+      modelRouter as unknown as ModelRouterUsecase,
+      agentRunService,
       {
-        execute: listMyMentionsExecute,
-      } as unknown as ListMyMentionsUsecase,
+        recordDailyPlan: dailyPlanRecord,
+      } as unknown as DailyPlanService,
       {
-        execute: listActiveTasksExecute,
-      } as unknown as ListActiveTasksUsecase,
+        execute: appendDailyPlanExecute,
+      } as unknown as AppendDailyPlanUsecase,
+      contextCollector,
+      promptBuilder,
+      evidenceBuilder,
     );
 
     modelRouter.route.mockResolvedValue({
@@ -236,6 +282,70 @@ describe('GenerateDailyPlanUsecase', () => {
     ).rejects.toBeInstanceOf(PmAgentException);
   });
 
+  describe('daily_plan 기록', () => {
+    it('plan 생성 성공 후 dailyPlanService.recordDailyPlan 이 agentRunId 와 함께 호출된다', async () => {
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U' });
+
+      expect(dailyPlanRecord).toHaveBeenCalledTimes(1);
+      const [call] = dailyPlanRecord.mock.calls;
+      expect(call[0]).toMatchObject({
+        plan: validPlan,
+        agentRunId: 42,
+        evidenceIds: [],
+      });
+      expect(call[0].planDate).toBeInstanceOf(Date);
+    });
+
+    it('recordDailyPlan 실패해도 plan 응답은 graceful 반환 (throw X)', async () => {
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+      dailyPlanRecord.mockRejectedValue(new Error('db down'));
+
+      const result = await usecase.execute({
+        tasksText: 'x',
+        slackUserId: 'U',
+      });
+
+      expect(result).toEqual(validPlan);
+    });
+
+    it('Notion AppendDailyPlanUsecase 도 plan 생성 후 호출된다 (graceful)', async () => {
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+
+      await usecase.execute({ tasksText: 'x', slackUserId: 'U' });
+
+      expect(appendDailyPlanExecute).toHaveBeenCalledTimes(1);
+      const [call] = appendDailyPlanExecute.mock.calls;
+      expect(call[0]).toMatchObject({ plan: validPlan });
+      expect(call[0].planDate).toBeInstanceOf(Date);
+    });
+
+    it('Notion append 실패해도 plan 응답은 graceful 반환', async () => {
+      listAssignedTasksExecute.mockResolvedValue({
+        issues: [],
+        pullRequests: [],
+      });
+      appendDailyPlanExecute.mockRejectedValue(new Error('notion 403'));
+
+      const result = await usecase.execute({
+        tasksText: 'x',
+        slackUserId: 'U',
+      });
+
+      expect(result).toEqual(validPlan);
+    });
+  });
+
   it('AgentRunService 에 PM / SLACK_COMMAND_TODAY 가 전달된다', async () => {
     listAssignedTasksExecute.mockResolvedValue({
       issues: [],
@@ -251,9 +361,13 @@ describe('GenerateDailyPlanUsecase', () => {
 
   describe('전일 plan 참조 (옵션 C)', () => {
     const yesterdayPlan: DailyPlan = {
-      topPriority: '어제의 최우선',
-      morning: ['어제 오전 1'],
-      afternoon: ['어제 오후 1'],
+      topPriority: task('어제의 최우선', { isCriticalPath: true }),
+      varianceAnalysis: {
+        rolledOverTasks: [],
+        analysisReasoning: '(이월 없음)',
+      },
+      morning: [task('어제 오전 1')],
+      afternoon: [task('어제 오후 1')],
       blocker: null,
       estimatedHours: 5,
       reasoning: 'r',
@@ -352,10 +466,14 @@ describe('GenerateDailyPlanUsecase', () => {
     };
 
     it('agentType 에 따라 PM/WORK_REVIEWER 다른 결과 반환 시 두 섹션 모두 prompt 에 포함', async () => {
-      const yesterdayPlan = {
-        topPriority: '어제의 최우선',
-        morning: ['오전 1'],
-        afternoon: ['오후 1'],
+      const yesterdayPlan: DailyPlan = {
+        topPriority: task('어제의 최우선', { isCriticalPath: true }),
+        varianceAnalysis: {
+          rolledOverTasks: [],
+          analysisReasoning: '(이월 없음)',
+        },
+        morning: [task('오전 1')],
+        afternoon: [task('오후 1')],
         blocker: null,
         estimatedHours: 5,
         reasoning: 'r',

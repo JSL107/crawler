@@ -14,11 +14,13 @@ export enum TriggerType {
   MANUAL = 'MANUAL',
 }
 
+// payload 는 JSON 직렬화 가능한 임의 데이터 (object / array / primitive).
+// caller 가 domain 객체를 그대로 넘기도록 unknown 으로 두고, Prisma 저장 경계에서만 InputJsonValue 로 cast.
 export interface EvidenceInput {
   sourceType: string;
   sourceId: string;
   url?: string;
   title?: string;
   excerpt?: string;
-  payload: Record<string, unknown>;
+  payload: unknown;
 }

@@ -8,7 +8,14 @@ describe('buildGeminiArgs', () => {
   it('-p "" + -o json + --approval-mode plan 포함', () => {
     const args = buildGeminiArgs({});
     expect(args).toEqual(
-      expect.arrayContaining(['-p', '', '-o', 'json', '--approval-mode', 'plan']),
+      expect.arrayContaining([
+        '-p',
+        '',
+        '-o',
+        'json',
+        '--approval-mode',
+        'plan',
+      ]),
     );
   });
 
@@ -27,9 +34,9 @@ describe('buildGeminiStdinPayload', () => {
   });
 
   it('systemPrompt 가 있으면 [System Instructions] / [User] 블록으로 합친다', () => {
-    expect(
-      buildGeminiStdinPayload({ prompt: 'u', systemPrompt: 's' }),
-    ).toBe('[System Instructions]\ns\n\n[User]\nu');
+    expect(buildGeminiStdinPayload({ prompt: 'u', systemPrompt: 's' })).toBe(
+      '[System Instructions]\ns\n\n[User]\nu',
+    );
   });
 });
 

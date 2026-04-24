@@ -10,7 +10,7 @@ import { App, LogLevel } from '@slack/bolt';
 import { ReviewPullRequestUsecase } from '../agent/code-reviewer/application/review-pull-request.usecase';
 import { PullRequestReview } from '../agent/code-reviewer/domain/code-reviewer.type';
 import { GenerateDailyPlanUsecase } from '../agent/pm/application/generate-daily-plan.usecase';
-import { DailyPlan } from '../agent/pm/domain/pm-agent.type';
+import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
 import { GenerateWorklogUsecase } from '../agent/work-reviewer/application/generate-worklog.usecase';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
 import { DomainException } from '../common/exception/domain.exception';
@@ -238,20 +238,44 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
+const renderTaskLine = (task: TaskItem): string => {
+  const critical = task.isCriticalPath ? '⚠ ' : '';
+  const wbs =
+    task.subtasks.length > 0
+      ? `\n${task.subtasks
+          .map((s) => `   ↳ ${s.title} (${s.estimatedMinutes}m)`)
+          .join('\n')}`
+      : '';
+  return `• ${critical}${task.title}${wbs}`;
+};
+
 export const formatDailyPlan = (plan: DailyPlan): string => {
   const lines: string[] = [
     '*오늘의 최우선 과제*',
-    `• ${plan.topPriority}`,
+    renderTaskLine(plan.topPriority),
     '',
     '*오전*',
-    ...plan.morning.map((task) => `• ${task}`),
+    ...plan.morning.map(renderTaskLine),
     '',
     '*오후*',
-    ...plan.afternoon.map((task) => `• ${task}`),
+    ...plan.afternoon.map(renderTaskLine),
   ];
 
   if (plan.blocker) {
     lines.push('', `*Blocker*: ${plan.blocker}`);
+  }
+
+  // 이월 항목이 없어도 analysisReasoning 이 있으면 "왜 drop 했는지" 설명을 노출 —
+  // Rollover 자율권 (Eisenhower 매트릭스) 판단 근거가 사용자에게 보여야 함 (codex review bi531458d P3).
+  const { rolledOverTasks, analysisReasoning } = plan.varianceAnalysis;
+  if (rolledOverTasks.length > 0 || analysisReasoning.length > 0) {
+    lines.push('', '*어제 이월*');
+    if (rolledOverTasks.length > 0) {
+      lines.push(...rolledOverTasks.map((t) => `• ${t}`));
+    }
+    if (analysisReasoning.length > 0) {
+      lines.push(`_이월 근거_: ${analysisReasoning}`);
+    }
   }
 
   lines.push(

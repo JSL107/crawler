@@ -1,11 +1,24 @@
 import { PmAgentException } from '../pm-agent.exception';
+import { DailyPlan, TaskItem } from '../pm-agent.type';
 import { parseDailyPlan } from './daily-plan.parser';
 
+const task = (title: string, overrides: Partial<TaskItem> = {}): TaskItem => ({
+  id: overrides.id ?? `user:${title}`,
+  title,
+  source: overrides.source ?? 'USER_INPUT',
+  subtasks: overrides.subtasks ?? [],
+  isCriticalPath: overrides.isCriticalPath ?? false,
+});
+
 describe('parseDailyPlan', () => {
-  const validPlan = {
-    topPriority: 'PM Agent /today 구현',
-    morning: ['prisma schema 확인', '프롬프트 다듬기'],
-    afternoon: ['코드 리뷰 2건', '일일 회고'],
+  const validPlan: DailyPlan = {
+    topPriority: task('PM Agent /today 구현', { isCriticalPath: true }),
+    varianceAnalysis: {
+      rolledOverTasks: [],
+      analysisReasoning: '(이월 없음)',
+    },
+    morning: [task('prisma schema 확인'), task('프롬프트 다듬기')],
+    afternoon: [task('코드 리뷰 2건'), task('일일 회고')],
     blocker: null,
     estimatedHours: 6.5,
     reasoning: '가장 impact 큰 PM Agent 를 오전 집중 시간에 배치',
@@ -22,12 +35,30 @@ describe('parseDailyPlan', () => {
     expect(result).toEqual(validPlan);
   });
 
+  it('subtasks / isCriticalPath / varianceAnalysis 가 포함된 신버전 스키마를 정상 파싱', () => {
+    const withWbs: DailyPlan = {
+      ...validPlan,
+      topPriority: task('큰 작업', {
+        isCriticalPath: true,
+        subtasks: [
+          { title: '설계', estimatedMinutes: 60 },
+          { title: '구현', estimatedMinutes: 120 },
+        ],
+      }),
+      varianceAnalysis: {
+        rolledOverTasks: ['어제 못 한 일'],
+        analysisReasoning: '중요도 낮아 오후로 밀었음',
+      },
+    };
+    expect(parseDailyPlan(JSON.stringify(withWbs))).toEqual(withWbs);
+  });
+
   it('JSON 으로 파싱 불가하면 INVALID_MODEL_OUTPUT 예외', () => {
     expect(() => parseDailyPlan('this is not json')).toThrow(PmAgentException);
   });
 
   it('필수 필드 누락 시 INVALID_MODEL_OUTPUT 예외', () => {
-    const broken = { ...validPlan } as Partial<typeof validPlan>;
+    const broken = { ...validPlan } as Partial<DailyPlan>;
     delete broken.topPriority;
     expect(() => parseDailyPlan(JSON.stringify(broken))).toThrow(
       PmAgentException,
@@ -41,8 +72,26 @@ describe('parseDailyPlan', () => {
     );
   });
 
-  it('morning 이 문자열 배열이 아닐 때 예외', () => {
-    const broken = { ...validPlan, morning: [1, 2] };
+  it('morning 이 TaskItem 배열이 아닐 때 예외', () => {
+    const broken = { ...validPlan, morning: ['string 뿐'] };
+    expect(() => parseDailyPlan(JSON.stringify(broken))).toThrow(
+      PmAgentException,
+    );
+  });
+
+  it('varianceAnalysis 누락 시 예외 (신버전 스키마 필수 필드)', () => {
+    const broken = { ...validPlan } as Partial<DailyPlan>;
+    delete broken.varianceAnalysis;
+    expect(() => parseDailyPlan(JSON.stringify(broken))).toThrow(
+      PmAgentException,
+    );
+  });
+
+  it('알 수 없는 source 값은 예외', () => {
+    const broken = {
+      ...validPlan,
+      topPriority: { ...validPlan.topPriority, source: 'UNKNOWN' },
+    };
     expect(() => parseDailyPlan(JSON.stringify(broken))).toThrow(
       PmAgentException,
     );

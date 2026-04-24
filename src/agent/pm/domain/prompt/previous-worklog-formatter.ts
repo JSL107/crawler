@@ -1,3 +1,4 @@
+import { isDailyReviewShape } from '../../../work-reviewer/domain/prompt/daily-review.shape';
 import { DailyReview } from '../../../work-reviewer/domain/work-reviewer.type';
 
 // 직전 Work Reviewer (`/worklog`) 결과를 PM 모델에게 "어제 한 일" 컨텍스트로 보여주는 섹션.
@@ -48,43 +49,6 @@ export const formatPreviousDailyReviewSection = ({
 
 // previous output (DB 의 Json) 을 안전하게 DailyReview 로 narrow.
 // shape 가 안 맞으면 null — 호출자는 "이전 worklog 없음" 으로 graceful 처리.
-export const coerceToDailyReview = (value: unknown): DailyReview | null => {
-  if (typeof value !== 'object' || value === null) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    typeof record.summary !== 'string' ||
-    !isImpactShape(record.impact) ||
-    !isImprovementShape(record.improvementBeforeAfter) ||
-    !isStringArray(record.nextActions) ||
-    typeof record.oneLineAchievement !== 'string'
-  ) {
-    return null;
-  }
-  return record as unknown as DailyReview;
-};
-
-const isImpactShape = (value: unknown): boolean => {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    isStringArray(record.quantitative) && typeof record.qualitative === 'string'
-  );
-};
-
-const isImprovementShape = (value: unknown): boolean => {
-  if (value === null) {
-    return true;
-  }
-  if (typeof value !== 'object') {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return typeof record.before === 'string' && typeof record.after === 'string';
-};
-
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((item) => typeof item === 'string');
+// shape 판정은 work-reviewer domain 의 isDailyReviewShape 로 통합 (parser 와 동일 규칙).
+export const coerceToDailyReview = (value: unknown): DailyReview | null =>
+  isDailyReviewShape(value) ? value : null;

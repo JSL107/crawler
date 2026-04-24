@@ -25,7 +25,7 @@ export class AgentRunPrismaRepository implements AgentRunRepositoryPort {
         agentType,
         triggerType,
         status: 'IN_PROGRESS',
-        inputSnapshot: inputSnapshot as Prisma.InputJsonValue,
+        inputSnapshot: inputSnapshot as unknown as Prisma.InputJsonValue,
       },
       select: { id: true },
     });
@@ -44,7 +44,7 @@ export class AgentRunPrismaRepository implements AgentRunRepositoryPort {
       data: {
         status,
         modelUsed,
-        output: (output ?? null) as Prisma.InputJsonValue,
+        output: (output ?? null) as unknown as Prisma.InputJsonValue,
         endedAt: new Date(),
       },
     });
@@ -67,7 +67,7 @@ export class AgentRunPrismaRepository implements AgentRunRepositoryPort {
         url,
         title,
         excerpt,
-        payload: payload as Prisma.InputJsonValue,
+        payload: payload as unknown as Prisma.InputJsonValue,
       },
     });
   }
@@ -88,7 +88,7 @@ export class AgentRunPrismaRepository implements AgentRunRepositoryPort {
     }
     return {
       id: row.id,
-      output: row.output as Record<string, unknown> | null,
+      output: row.output as unknown,
       endedAt: row.endedAt,
     };
   }

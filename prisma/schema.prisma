@@ -22,6 +22,7 @@ model AgentRun {
   endedAt           DateTime? @map("ended_at")
 
   evidenceRecords   EvidenceRecord[]
+  dailyPlan         DailyPlan?
 
   @@index([agentType, startedAt])
   @@map("agent_run")
@@ -41,4 +42,20 @@ model EvidenceRecord {
 
   @@index([sourceType, sourceId])
   @@map("evidence_record")
+}
+
+// jarvis_agents_plan_2026.md §11.1 daily_plan — "오늘 plan" 을 날짜 단위로 직접 조회할 수 있게 하는 뷰용 테이블.
+// agent_run.output 에도 동일 정보가 있지만 plan_date 인덱스가 없어 날짜 기반 reporting 이 비효율.
+// 같은 날 재실행 시 upsert 로 최신 plan 덮어쓰기 (planDate @unique).
+model DailyPlan {
+  id           Int      @id @default(autoincrement())
+  planDate     DateTime @unique @db.Date @map("plan_date")
+  planJson     Json     @map("plan_json")
+  agentRunId   Int      @unique @map("agent_run_id")
+  agentRun     AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  evidenceIds  Int[]    @map("evidence_ids")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("daily_plan")
 }

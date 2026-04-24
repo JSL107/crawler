@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@notionhq/client';
 
+import { AppendDailyPlanUsecase } from './application/append-daily-plan.usecase';
+import { AppendWorklogUsecase } from './application/append-worklog.usecase';
 import { ListActiveTasksUsecase } from './application/list-active-tasks.usecase';
 import {
   NOTION_CLIENT_INSTANCE,
@@ -12,6 +14,8 @@ import { NotionApiClient } from './infrastructure/notion-api.client';
 @Module({
   providers: [
     ListActiveTasksUsecase,
+    AppendDailyPlanUsecase,
+    AppendWorklogUsecase,
     {
       // Notion Client factory — NOTION_TOKEN 미설정 시 null. 호출 시점에 친절한 예외.
       provide: NOTION_CLIENT_INSTANCE,
@@ -29,6 +33,10 @@ import { NotionApiClient } from './infrastructure/notion-api.client';
       useClass: NotionApiClient,
     },
   ],
-  exports: [ListActiveTasksUsecase],
+  exports: [
+    ListActiveTasksUsecase,
+    AppendDailyPlanUsecase,
+    AppendWorklogUsecase,
+  ],
 })
 export class NotionModule {}

@@ -14,6 +14,8 @@ describe('ListActiveTasksUsecase', () => {
     ];
     const client: jest.Mocked<NotionClientPort> = {
       listActiveTasks: jest.fn().mockResolvedValue(fixture),
+      findOrCreateDailyPage: jest.fn(),
+      appendBlocks: jest.fn(),
     };
     const usecase = new ListActiveTasksUsecase(client);
 
@@ -28,6 +30,8 @@ describe('ListActiveTasksUsecase', () => {
   it('options 없이 호출도 OK', async () => {
     const client: jest.Mocked<NotionClientPort> = {
       listActiveTasks: jest.fn().mockResolvedValue([]),
+      findOrCreateDailyPage: jest.fn(),
+      appendBlocks: jest.fn(),
     };
     const usecase = new ListActiveTasksUsecase(client);
 

@@ -5,6 +5,7 @@ import {
   CompletionResponse,
   ModelProviderName,
 } from '../../../model-router/domain/model-router.type';
+import { AppendWorklogUsecase } from '../../../notion/application/append-worklog.usecase';
 import { WorkReviewerException } from '../domain/work-reviewer.exception';
 import { DailyReview } from '../domain/work-reviewer.type';
 import { WorkReviewerErrorCode } from '../domain/work-reviewer-error-code.enum';
@@ -24,18 +25,21 @@ describe('GenerateWorklogUsecase', () => {
 
   let modelRouter: { route: jest.Mock };
   let agentRunServiceExecute: jest.Mock;
+  let appendWorklogExecute: jest.Mock;
   let usecase: GenerateWorklogUsecase;
 
   beforeEach(() => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
-      const execution = await input.run();
+      const execution = await input.run({ agentRunId: 42 });
       return execution.result;
     });
+    appendWorklogExecute = jest.fn().mockResolvedValue(null);
 
     usecase = new GenerateWorklogUsecase(
       modelRouter as unknown as ModelRouterUsecase,
       { execute: agentRunServiceExecute } as unknown as AgentRunService,
+      { execute: appendWorklogExecute } as unknown as AppendWorklogUsecase,
     );
   });
 

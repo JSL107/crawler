@@ -1,6 +1,8 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { WebClient } from '@slack/web-api';
+import { match } from 'ts-pattern';
 
+import { DomainStatus } from '../../common/exception/domain-status.enum';
 import {
   ListMyMentionsOptions,
   SLACK_WEB_CLIENT,
@@ -35,7 +37,7 @@ export class SlackWebApiCollector implements SlackCollectorPort {
         code: SlackCollectorErrorCode.TOKEN_NOT_CONFIGURED,
         message:
           'SLACK_BOT_TOKEN 이 설정되지 않아 Slack WebAPI 호출이 불가합니다.',
-        status: HttpStatus.PRECONDITION_FAILED,
+        status: DomainStatus.PRECONDITION_FAILED,
       });
     }
 
@@ -122,15 +124,9 @@ const resolveChannelType = (channel: {
   is_im?: boolean;
   is_mpim?: boolean;
   is_private?: boolean;
-}): SlackMention['channelType'] => {
-  if (channel.is_im) {
-    return 'im';
-  }
-  if (channel.is_mpim) {
-    return 'mpim';
-  }
-  if (channel.is_private) {
-    return 'private_channel';
-  }
-  return 'public_channel';
-};
+}): SlackMention['channelType'] =>
+  match(channel)
+    .with({ is_im: true }, () => 'im' as const)
+    .with({ is_mpim: true }, () => 'mpim' as const)
+    .with({ is_private: true }, () => 'private_channel' as const)
+    .otherwise(() => 'public_channel' as const);

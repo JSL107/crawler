@@ -1,5 +1,5 @@
 import { PullRequestReview } from '../agent/code-reviewer/domain/code-reviewer.type';
-import { DailyPlan } from '../agent/pm/domain/pm-agent.type';
+import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
 import {
   formatDailyPlan,
@@ -7,11 +7,23 @@ import {
   formatPullRequestReview,
 } from './slack.service';
 
+const task = (title: string, overrides: Partial<TaskItem> = {}): TaskItem => ({
+  id: overrides.id ?? `user:${title}`,
+  title,
+  source: overrides.source ?? 'USER_INPUT',
+  subtasks: overrides.subtasks ?? [],
+  isCriticalPath: overrides.isCriticalPath ?? false,
+});
+
 describe('formatDailyPlan', () => {
   const base: DailyPlan = {
-    topPriority: 'PM Agent 구현 마무리',
-    morning: ['크롤러 테스트', 'prisma schema 검토'],
-    afternoon: ['README 보강', '코드 리뷰 2건'],
+    topPriority: task('PM Agent 구현 마무리', { isCriticalPath: true }),
+    varianceAnalysis: {
+      rolledOverTasks: [],
+      analysisReasoning: '(이월 없음)',
+    },
+    morning: [task('크롤러 테스트'), task('prisma schema 검토')],
+    afternoon: [task('README 보강'), task('코드 리뷰 2건')],
     blocker: null,
     estimatedHours: 7,
     reasoning: 'impact 기준으로 PM Agent 를 오전 최우선으로 배치',
@@ -21,7 +33,8 @@ describe('formatDailyPlan', () => {
     const output = formatDailyPlan(base);
 
     expect(output).toContain('*오늘의 최우선 과제*');
-    expect(output).toContain('• PM Agent 구현 마무리');
+    expect(output).toContain('PM Agent 구현 마무리');
+    expect(output).toContain('⚠');
     expect(output).toContain('*오전*');
     expect(output).toContain('• 크롤러 테스트');
     expect(output).toContain('*오후*');

@@ -32,14 +32,7 @@ export const buildGeminiArgs = ({
   // 시스템 프롬프트 전용 옵션은 v0.39 기준 없음 — 호출자가 prompt 본문 앞에 붙여 stdin 으로 같이 전달한다.
   // 이 함수는 systemPrompt 인자 자체는 무시하고 args 만 반환 — 합치는 책임은 호출자(complete) 에 있다.
   void systemPrompt;
-  return [
-    '-p',
-    '',
-    '-o',
-    'json',
-    '--approval-mode',
-    'plan',
-  ];
+  return ['-p', '', '-o', 'json', '--approval-mode', 'plan'];
 };
 
 export const buildGeminiStdinPayload = ({

@@ -27,27 +27,29 @@ describe('formatGithubTasksAsPromptSection', () => {
       ],
     };
 
-    const text = formatGithubTasksAsPromptSection(tasks);
+    const { content, truncatedCount } = formatGithubTasksAsPromptSection(tasks);
 
-    expect(text).toContain('[GitHub 에서 자동 수집한 assigned 항목]');
-    expect(text).toContain(
+    expect(content).toContain('[GitHub 에서 자동 수집한 assigned 항목]');
+    expect(content).toContain(
       '- Issue #12 (foo/bar) [bug, priority:high]: 크롤러 timeout 버그',
     );
-    expect(text).toContain('- PR #34 (foo/bar) [draft]: GitHub 커넥터 추가');
+    expect(content).toContain('- PR #34 (foo/bar) [draft]: GitHub 커넥터 추가');
+    expect(truncatedCount).toBe(0);
   });
 
   it('빈 결과면 명시적 안내 문구를 출력 (model 에게 "GitHub 는 없다" 명시)', () => {
-    const text = formatGithubTasksAsPromptSection({
+    const { content, truncatedCount } = formatGithubTasksAsPromptSection({
       issues: [],
       pullRequests: [],
     });
 
-    expect(text).toContain('(없음');
-    expect(text).toContain('GitHub 호출은 성공했으나');
+    expect(content).toContain('(없음');
+    expect(content).toContain('GitHub 호출은 성공했으나');
+    expect(truncatedCount).toBe(0);
   });
 
   it('label / draft 가 없으면 마크 미포함', () => {
-    const text = formatGithubTasksAsPromptSection({
+    const { content } = formatGithubTasksAsPromptSection({
       issues: [
         {
           number: 1,
@@ -71,8 +73,59 @@ describe('formatGithubTasksAsPromptSection', () => {
       ],
     });
 
-    expect(text).toContain('- Issue #1 (a/b): t');
-    expect(text).toContain('- PR #2 (a/b): t');
-    expect(text).not.toContain('[draft]');
+    expect(content).toContain('- Issue #1 (a/b): t');
+    expect(content).toContain('- PR #2 (a/b): t');
+    expect(content).not.toContain('[draft]');
+  });
+
+  it('항목 합이 maxItems 초과 시 cap + "(+N건 생략)" 표기', () => {
+    const issues = Array.from({ length: 25 }, (_, index) => ({
+      number: index + 1,
+      title: `i${index}`,
+      repo: 'a/b',
+      url: 'u',
+      labels: [],
+      updatedAt: 'x',
+    }));
+    const pullRequests = Array.from({ length: 15 }, (_, index) => ({
+      number: 100 + index,
+      title: `p${index}`,
+      repo: 'a/b',
+      url: 'u',
+      draft: false,
+      updatedAt: 'x',
+      requestedReviewers: [],
+    }));
+
+    const { content, truncatedCount } = formatGithubTasksAsPromptSection(
+      { issues, pullRequests },
+      { maxItems: 10 },
+    );
+
+    expect(truncatedCount).toBe(30);
+    expect(content).toContain('(+30건 생략 — 총 40건 중 10건만 표기)');
+    // 첫 10개 (issues 우선) 만 본문에 등장
+    expect(content).toContain('- Issue #1 ');
+    expect(content).toContain('- Issue #10 ');
+    expect(content).not.toContain('- Issue #11 ');
+    expect(content).not.toContain('- PR #100');
+  });
+
+  it('default maxItems = 30 적용, 30건 이하면 truncated 0', () => {
+    const issues = Array.from({ length: 30 }, (_, index) => ({
+      number: index + 1,
+      title: `t`,
+      repo: 'a/b',
+      url: 'u',
+      labels: [],
+      updatedAt: 'x',
+    }));
+
+    const { truncatedCount } = formatGithubTasksAsPromptSection({
+      issues,
+      pullRequests: [],
+    });
+
+    expect(truncatedCount).toBe(0);
   });
 });

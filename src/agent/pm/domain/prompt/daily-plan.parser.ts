@@ -1,8 +1,8 @@
-import { HttpStatus } from '@nestjs/common';
-
+import { DomainStatus } from '../../../../common/exception/domain-status.enum';
 import { PmAgentException } from '../pm-agent.exception';
 import { DailyPlan } from '../pm-agent.type';
 import { PmAgentErrorCode } from '../pm-agent-error-code.enum';
+import { isDailyPlanShape } from './daily-plan.shape';
 
 const CODE_FENCE_PATTERN = /^```(?:json)?\s*([\s\S]*?)\s*```$/;
 
@@ -17,7 +17,7 @@ export const parseDailyPlan = (text: string): DailyPlan => {
     throw new PmAgentException({
       code: PmAgentErrorCode.INVALID_MODEL_OUTPUT,
       message: '모델 응답이 DailyPlan 스키마와 맞지 않습니다.',
-      status: HttpStatus.BAD_GATEWAY,
+      status: DomainStatus.BAD_GATEWAY,
     });
   }
 
@@ -39,26 +39,8 @@ const parseJson = (text: string): unknown => {
     throw new PmAgentException({
       code: PmAgentErrorCode.INVALID_MODEL_OUTPUT,
       message: '모델 응답을 JSON 으로 파싱하지 못했습니다.',
-      status: HttpStatus.BAD_GATEWAY,
+      status: DomainStatus.BAD_GATEWAY,
       cause: error,
     });
   }
 };
-
-const isDailyPlanShape = (value: unknown): value is DailyPlan => {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.topPriority === 'string' &&
-    isStringArray(record.morning) &&
-    isStringArray(record.afternoon) &&
-    (record.blocker === null || typeof record.blocker === 'string') &&
-    typeof record.estimatedHours === 'number' &&
-    typeof record.reasoning === 'string'
-  );
-};
-
-const isStringArray = (value: unknown): value is string[] =>
-  Array.isArray(value) && value.every((item) => typeof item === 'string');

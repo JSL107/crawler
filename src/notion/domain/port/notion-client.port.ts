@@ -13,6 +13,38 @@ export interface ListActiveTasksOptions {
   perDatabaseLimit?: number;
 }
 
+// Day-page 블록 변환용 추상 타입. 도메인이 Notion SDK 에 의존하지 않도록 block 종류만 enum 형태로 노출.
+// 어댑터가 Notion block 형식 (heading_2 / heading_3 / bulleted_list_item / paragraph / to_do / divider) 으로 변환.
+export type NotionPlanBlock =
+  | { type: 'heading'; text: string } // heading_2 — "Check in HH:MM" 등
+  | { type: 'subheading'; text: string } // heading_3 — "오늘의 할 일" 등
+  | { type: 'bullet'; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'todo'; text: string; checked?: boolean }
+  | { type: 'divider' };
+
+export interface FindOrCreateDailyPageOptions {
+  databaseId: string;
+  title: string;
+}
+
+export interface AppendBlocksOptions {
+  pageId: string;
+  blocks: NotionPlanBlock[];
+}
+
+export interface NotionDailyPlanPage {
+  pageId: string;
+  url: string;
+}
+
 export interface NotionClientPort {
   listActiveTasks(options?: ListActiveTasksOptions): Promise<NotionTask[]>;
+  // Day-page 조회: title 과 일치하는 기존 page 가 있으면 반환, 없으면 생성 (properties: title 만).
+  // /today 는 Check-in 섹션, /worklog 는 Check-out 섹션을 같은 day-page 에 append 하는 방식.
+  findOrCreateDailyPage(
+    options: FindOrCreateDailyPageOptions,
+  ): Promise<NotionDailyPlanPage>;
+  // 기존 page 에 block 추가. /today /worklog 가 섹션을 append 하는 용도.
+  appendBlocks(options: AppendBlocksOptions): Promise<void>;
 }

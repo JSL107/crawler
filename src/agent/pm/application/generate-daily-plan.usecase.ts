@@ -1,51 +1,55 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import { AgentRunService } from '../../../agent-run/application/agent-run.service';
-import {
-  EvidenceInput,
-  TriggerType,
-} from '../../../agent-run/domain/agent-run.type';
-import { SucceededAgentRunSnapshot } from '../../../agent-run/domain/port/agent-run.repository.port';
-import { ListAssignedTasksUsecase } from '../../../github/application/list-assigned-tasks.usecase';
-import { AssignedTasks } from '../../../github/domain/github.type';
+import { TriggerType } from '../../../agent-run/domain/agent-run.type';
+import { DomainStatus } from '../../../common/exception/domain-status.enum';
+import { DailyPlanService } from '../../../daily-plan/application/daily-plan.service';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
 import { AgentType } from '../../../model-router/domain/model-router.type';
-import { ListActiveTasksUsecase } from '../../../notion/application/list-active-tasks.usecase';
-import { NotionTask } from '../../../notion/domain/notion.type';
-import { ListMyMentionsUsecase } from '../../../slack-collector/application/list-my-mentions.usecase';
-import { SlackMention } from '../../../slack-collector/domain/slack-collector.type';
-import { DailyReview } from '../../work-reviewer/domain/work-reviewer.type';
+import { AppendDailyPlanUsecase } from '../../../notion/application/append-daily-plan.usecase';
 import { PmAgentException } from '../domain/pm-agent.exception';
-import { DailyPlan, GenerateDailyPlanInput } from '../domain/pm-agent.type';
+import {
+  DailyPlan,
+  DailyPlanInputSnapshot,
+  GenerateDailyPlanInput,
+} from '../domain/pm-agent.type';
 import { PmAgentErrorCode } from '../domain/pm-agent-error-code.enum';
 import { parseDailyPlan } from '../domain/prompt/daily-plan.parser';
-import { formatGithubTasksAsPromptSection } from '../domain/prompt/github-task-formatter';
-import { formatNotionTasksAsPromptSection } from '../domain/prompt/notion-task-formatter';
 import { PM_SYSTEM_PROMPT } from '../domain/prompt/pm-system.prompt';
 import {
-  coerceToDailyPlan,
-  formatPreviousDailyPlanSection,
-} from '../domain/prompt/previous-plan-formatter';
+  DailyPlanContext,
+  DailyPlanContextCollector,
+  SLACK_MENTION_SINCE_HOURS,
+} from './daily-plan-context.collector';
+import { DailyPlanEvidenceBuilder } from './daily-plan-evidence.builder';
 import {
-  coerceToDailyReview,
-  formatPreviousDailyReviewSection,
-} from '../domain/prompt/previous-worklog-formatter';
-import { formatSlackMentionsAsPromptSection } from '../domain/prompt/slack-mention-formatter';
+  DailyPlanPromptBuilder,
+  TruncationMeta,
+} from './daily-plan-prompt.builder';
 
-const SLACK_MENTION_SINCE_HOURS = 24;
+const KST_OFFSET_HOURS = 9;
 
-interface PreviousPlanContext {
-  plan: DailyPlan;
-  endedAt: Date;
-  agentRunId: number;
-}
+// KST (UTC+9) 기준 "오늘 날짜" 를 UTC 00:00:00 Date 로 반환.
+// @db.Date 컬럼은 날짜만 저장하므로 시간 정보 제거. 한국 사용자 하루 경계 (00:00 KST) 에 맞춤.
+const getKstTodayAsUtcDate = (): Date => {
+  const nowMs = Date.now();
+  const kstMs = nowMs + KST_OFFSET_HOURS * 60 * 60 * 1000;
+  const kstDate = new Date(kstMs);
+  return new Date(
+    Date.UTC(
+      kstDate.getUTCFullYear(),
+      kstDate.getUTCMonth(),
+      kstDate.getUTCDate(),
+    ),
+  );
+};
 
-interface PreviousWorklogContext {
-  review: DailyReview;
-  endedAt: Date;
-  agentRunId: number;
-}
-
+// PM Agent `/today` 유스케이스 — orchestration only.
+// 실제 책임 분리:
+//  - 외부 context 5종 수집: DailyPlanContextCollector
+//  - prompt 조립 + byte cap: DailyPlanPromptBuilder
+//  - evidence 조립: DailyPlanEvidenceBuilder
+//  - plan 저장 (DB + Notion): DailyPlanService + AppendDailyPlanUsecase
 @Injectable()
 export class GenerateDailyPlanUsecase {
   private readonly logger = new Logger(GenerateDailyPlanUsecase.name);
@@ -53,9 +57,11 @@ export class GenerateDailyPlanUsecase {
   constructor(
     private readonly modelRouter: ModelRouterUsecase,
     private readonly agentRunService: AgentRunService,
-    private readonly listAssignedTasksUsecase: ListAssignedTasksUsecase,
-    private readonly listMyMentionsUsecase: ListMyMentionsUsecase,
-    private readonly listActiveTasksUsecase: ListActiveTasksUsecase,
+    private readonly dailyPlanService: DailyPlanService,
+    private readonly appendDailyPlanUsecase: AppendDailyPlanUsecase,
+    private readonly contextCollector: DailyPlanContextCollector,
+    private readonly promptBuilder: DailyPlanPromptBuilder,
+    private readonly evidenceBuilder: DailyPlanEvidenceBuilder,
   ) {}
 
   async execute({
@@ -64,46 +70,114 @@ export class GenerateDailyPlanUsecase {
   }: GenerateDailyPlanInput): Promise<DailyPlan> {
     const userText = tasksText.trim();
 
-    // 외부 컨텍스트 5종 모두 graceful — 실패해도 사용자 입력만으로 계속 진행한다.
-    const [
-      githubTasks,
-      previousPlan,
-      previousWorklog,
-      slackMentions,
-      notionTasks,
-    ] = await Promise.all([
-      this.fetchGithubTasksOrNull(),
-      this.fetchPreviousPlanOrNull(),
-      this.fetchPreviousWorklogOrNull(),
-      this.fetchSlackMentionsOrEmpty({ slackUserId }),
-      this.fetchNotionTasksOrEmpty(),
-    ]);
-    const githubItemCount = githubTasks
-      ? githubTasks.issues.length + githubTasks.pullRequests.length
-      : 0;
+    // planDate 는 request 진입 "첫 await 이전" 시점에 고정한다.
+    // context collect 과 model completion 합쳐 10~40s 걸리므로 그 사이 midnight 를 넘기면
+    // next-day row / Notion page 로 저장되는 regression 방지
+    // (codex review b1309omm0 P1 → bi531458d P1 재지적).
+    const planDate = getKstTodayAsUtcDate();
 
+    const context = await this.contextCollector.collect({
+      userText,
+      slackUserId,
+    });
+
+    this.assertNonEmptyInput(context);
+
+    const { prompt, truncated } = this.promptBuilder.build(context);
+    const evidence = this.evidenceBuilder.build(context);
+    const inputSnapshot = this.buildInputSnapshot({
+      context,
+      combinedPrompt: prompt,
+      truncated,
+    });
+
+    return this.agentRunService.execute({
+      agentType: AgentType.PM,
+      triggerType: TriggerType.SLACK_COMMAND_TODAY,
+      inputSnapshot,
+      evidence,
+      run: async ({ agentRunId }) => {
+        const completion = await this.modelRouter.route({
+          agentType: AgentType.PM,
+          request: { prompt, systemPrompt: PM_SYSTEM_PROMPT },
+        });
+        const plan = parseDailyPlan(completion.text);
+
+        await this.persistPlanGracefully({ plan, agentRunId, planDate });
+
+        return {
+          result: plan,
+          modelUsed: completion.modelUsed,
+          output: plan,
+        };
+      },
+    });
+  }
+
+  private assertNonEmptyInput(context: DailyPlanContext): void {
+    const githubItemCount = context.githubTasks
+      ? context.githubTasks.issues.length +
+        context.githubTasks.pullRequests.length
+      : 0;
     if (
-      userText.length === 0 &&
+      context.userText.length === 0 &&
       githubItemCount === 0 &&
-      notionTasks.length === 0
+      context.notionTasks.length === 0
     ) {
       throw new PmAgentException({
         code: PmAgentErrorCode.EMPTY_TASKS_INPUT,
         message:
           '오늘 할 일이 비어있고 GitHub / Notion 자동 수집도 비어있습니다. `/today <할 일>` 형식으로 입력하거나 GITHUB_TOKEN / NOTION_TOKEN 을 설정해주세요.',
-        status: HttpStatus.BAD_REQUEST,
+        status: DomainStatus.BAD_REQUEST,
       });
     }
+  }
 
-    const combinedPrompt = this.buildCombinedPrompt({
-      userText,
-      githubTasks,
-      previousPlan,
-      previousWorklog,
-      slackMentions,
-      notionTasks,
-    });
-    const evidence = this.buildEvidence({
+  // daily_plan 테이블 upsert + Notion Daily Plan 페이지 append.
+  // 둘 다 graceful — 어느 하나 실패해도 plan 결과는 사용자에게 정상 반환.
+  private async persistPlanGracefully({
+    plan,
+    agentRunId,
+    planDate,
+  }: {
+    plan: DailyPlan;
+    agentRunId: number;
+    planDate: Date;
+  }): Promise<void> {
+    try {
+      await this.dailyPlanService.recordDailyPlan({
+        planDate,
+        plan,
+        agentRunId,
+        evidenceIds: [],
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `daily_plan 기록 실패 (plan 응답은 정상 반환): ${message}`,
+      );
+    }
+
+    try {
+      await this.appendDailyPlanUsecase.execute({ plan, planDate });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Notion Daily Plan 기록 실패 (plan 응답은 정상 반환): ${message}`,
+      );
+    }
+  }
+
+  private buildInputSnapshot({
+    context,
+    combinedPrompt,
+    truncated,
+  }: {
+    context: DailyPlanContext;
+    combinedPrompt: string;
+    truncated: TruncationMeta;
+  }): DailyPlanInputSnapshot {
+    const {
       userText,
       slackUserId,
       githubTasks,
@@ -111,259 +185,32 @@ export class GenerateDailyPlanUsecase {
       previousWorklog,
       slackMentions,
       notionTasks,
-    });
-
-    return this.agentRunService.execute({
-      agentType: AgentType.PM,
-      triggerType: TriggerType.SLACK_COMMAND_TODAY,
-      inputSnapshot: {
-        tasksText: userText,
-        slackUserId,
-        githubItemCount,
-        githubFetchAttempted: true,
-        githubFetchSucceeded: githubTasks !== null,
-        previousPlanReferenced: previousPlan !== null,
-        previousPlanAgentRunId: previousPlan ? previousPlan.agentRunId : null,
-        previousWorklogReferenced: previousWorklog !== null,
-        previousWorklogAgentRunId: previousWorklog
-          ? previousWorklog.agentRunId
-          : null,
-        slackMentionCount: slackMentions.length,
-        slackMentionSinceHours: SLACK_MENTION_SINCE_HOURS,
-        notionTaskCount: notionTasks.length,
+    } = context;
+    const githubItemCount = githubTasks
+      ? githubTasks.issues.length + githubTasks.pullRequests.length
+      : 0;
+    return {
+      tasksText: userText,
+      slackUserId,
+      githubItemCount,
+      githubFetchAttempted: true,
+      githubFetchSucceeded: githubTasks !== null,
+      previousPlanReferenced: previousPlan !== null,
+      previousPlanAgentRunId: previousPlan ? previousPlan.agentRunId : null,
+      previousWorklogReferenced: previousWorklog !== null,
+      previousWorklogAgentRunId: previousWorklog
+        ? previousWorklog.agentRunId
+        : null,
+      slackMentionCount: slackMentions.length,
+      slackMentionSinceHours: SLACK_MENTION_SINCE_HOURS,
+      notionTaskCount: notionTasks.length,
+      promptByteLength: Buffer.byteLength(combinedPrompt, 'utf8'),
+      truncated: {
+        github: truncated.github,
+        notion: truncated.notion,
+        slackMentions: truncated.slackMentions,
+        droppedSections: truncated.droppedSections,
       },
-      evidence,
-      run: async () => {
-        const completion = await this.modelRouter.route({
-          agentType: AgentType.PM,
-          request: {
-            prompt: combinedPrompt,
-            systemPrompt: PM_SYSTEM_PROMPT,
-          },
-        });
-        const plan = parseDailyPlan(completion.text);
-        return {
-          result: plan,
-          modelUsed: completion.modelUsed,
-          output: plan as unknown as Record<string, unknown>,
-        };
-      },
-    });
-  }
-
-  private async fetchGithubTasksOrNull(): Promise<AssignedTasks | null> {
-    try {
-      return await this.listAssignedTasksUsecase.execute();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `GitHub assigned tasks 수집 실패 (사용자 입력만으로 계속 진행): ${message}`,
-      );
-      return null;
-    }
-  }
-
-  private async fetchSlackMentionsOrEmpty({
-    slackUserId,
-  }: {
-    slackUserId: string;
-  }): Promise<SlackMention[]> {
-    try {
-      return await this.listMyMentionsUsecase.execute({
-        slackUserId,
-        sinceHours: SLACK_MENTION_SINCE_HOURS,
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Slack 멘션 수집 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
-      );
-      return [];
-    }
-  }
-
-  private async fetchNotionTasksOrEmpty(): Promise<NotionTask[]> {
-    try {
-      return await this.listActiveTasksUsecase.execute();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `Notion task 수집 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
-      );
-      return [];
-    }
-  }
-
-  private async fetchPreviousPlanOrNull(): Promise<PreviousPlanContext | null> {
-    const snapshot = await this.findLatestRunOrNull(AgentType.PM);
-    if (!snapshot) {
-      return null;
-    }
-    const plan = coerceToDailyPlan(snapshot.output);
-    if (!plan) {
-      this.logger.warn(
-        `이전 PM AgentRun #${snapshot.id} 의 output 이 DailyPlan 스키마에 안 맞아 무시합니다.`,
-      );
-      return null;
-    }
-    return { plan, endedAt: snapshot.endedAt, agentRunId: snapshot.id };
-  }
-
-  private async fetchPreviousWorklogOrNull(): Promise<PreviousWorklogContext | null> {
-    const snapshot = await this.findLatestRunOrNull(AgentType.WORK_REVIEWER);
-    if (!snapshot) {
-      return null;
-    }
-    const review = coerceToDailyReview(snapshot.output);
-    if (!review) {
-      this.logger.warn(
-        `이전 WORK_REVIEWER AgentRun #${snapshot.id} 의 output 이 DailyReview 스키마에 안 맞아 무시합니다.`,
-      );
-      return null;
-    }
-    return { review, endedAt: snapshot.endedAt, agentRunId: snapshot.id };
-  }
-
-  // 두 fetcher 가 동일한 try/catch + null 패턴을 공유하므로 여기서 한번만 처리한다.
-  private async findLatestRunOrNull(
-    agentType: AgentType,
-  ): Promise<SucceededAgentRunSnapshot | null> {
-    try {
-      return await this.agentRunService.findLatestSucceededRun({ agentType });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(
-        `${agentType} 직전 run 조회 실패 (해당 컨텍스트 없이 계속 진행): ${message}`,
-      );
-      return null;
-    }
-  }
-
-  private buildCombinedPrompt({
-    userText,
-    githubTasks,
-    previousPlan,
-    previousWorklog,
-    slackMentions,
-    notionTasks,
-  }: {
-    userText: string;
-    githubTasks: AssignedTasks | null;
-    previousPlan: PreviousPlanContext | null;
-    previousWorklog: PreviousWorklogContext | null;
-    slackMentions: SlackMention[];
-    notionTasks: NotionTask[];
-  }): string {
-    const sections: string[] = [];
-    if (previousPlan) {
-      sections.push(
-        formatPreviousDailyPlanSection({
-          plan: previousPlan.plan,
-          endedAt: previousPlan.endedAt,
-        }),
-      );
-    }
-    if (previousWorklog) {
-      sections.push(
-        formatPreviousDailyReviewSection({
-          review: previousWorklog.review,
-          endedAt: previousWorklog.endedAt,
-        }),
-      );
-    }
-    if (slackMentions.length > 0) {
-      sections.push(
-        formatSlackMentionsAsPromptSection({
-          mentions: slackMentions,
-          sinceHours: SLACK_MENTION_SINCE_HOURS,
-        }),
-      );
-    }
-    if (userText.length > 0) {
-      sections.push(`[사용자 입력]\n${userText}`);
-    }
-    if (githubTasks) {
-      sections.push(formatGithubTasksAsPromptSection(githubTasks));
-    }
-    if (notionTasks.length > 0) {
-      sections.push(formatNotionTasksAsPromptSection(notionTasks));
-    }
-    return sections.join('\n\n');
-  }
-
-  private buildEvidence({
-    userText,
-    slackUserId,
-    githubTasks,
-    previousPlan,
-    previousWorklog,
-    slackMentions,
-    notionTasks,
-  }: {
-    userText: string;
-    slackUserId: string;
-    githubTasks: AssignedTasks | null;
-    previousPlan: PreviousPlanContext | null;
-    previousWorklog: PreviousWorklogContext | null;
-    slackMentions: SlackMention[];
-    notionTasks: NotionTask[];
-  }): EvidenceInput[] {
-    const evidence: EvidenceInput[] = [
-      {
-        sourceType: 'SLACK_COMMAND_TODAY',
-        sourceId: slackUserId,
-        payload: { tasksText: userText },
-      },
-    ];
-    if (githubTasks) {
-      evidence.push({
-        sourceType: 'GITHUB_ASSIGNED_TASKS',
-        sourceId: 'me',
-        payload: {
-          issues: githubTasks.issues,
-          pullRequests: githubTasks.pullRequests,
-        },
-      });
-    }
-    if (previousPlan) {
-      evidence.push({
-        sourceType: 'PRIOR_DAILY_PLAN',
-        sourceId: String(previousPlan.agentRunId),
-        payload: {
-          plan: previousPlan.plan as unknown as Record<string, unknown>,
-          endedAt: previousPlan.endedAt.toISOString(),
-        },
-      });
-    }
-    if (previousWorklog) {
-      evidence.push({
-        sourceType: 'PRIOR_DAILY_REVIEW',
-        sourceId: String(previousWorklog.agentRunId),
-        payload: {
-          review: previousWorklog.review as unknown as Record<string, unknown>,
-          endedAt: previousWorklog.endedAt.toISOString(),
-        },
-      });
-    }
-    if (slackMentions.length > 0) {
-      evidence.push({
-        sourceType: 'SLACK_MENTIONS',
-        sourceId: slackUserId,
-        payload: {
-          sinceHours: SLACK_MENTION_SINCE_HOURS,
-          mentions: slackMentions as unknown as Record<string, unknown>[],
-        },
-      });
-    }
-    if (notionTasks.length > 0) {
-      evidence.push({
-        sourceType: 'NOTION_TASKS',
-        sourceId: 'me',
-        payload: {
-          tasks: notionTasks as unknown as Record<string, unknown>[],
-        },
-      });
-    }
-    return evidence;
+    };
   }
 }
