@@ -90,23 +90,26 @@ export class DailyPlanPromptBuilder {
 
     const droppedSections = this.trimSectionsToFit(sections);
 
-    let prompt = (Object.keys(sections) as Array<keyof PromptSections>)
+    const joined = (Object.keys(sections) as Array<keyof PromptSections>)
       .map((key) => sections[key])
       .filter((value): value is string => value !== null)
       .join('\n\n');
 
     // 최종 guard — core section (userText/github/notion) 이 단독으로 cap 초과하는 경우 tail truncate.
     // codex review bcpccaqik P2 대응: drop 만으로 cap 을 보장할 수 없는 엣지케이스 방어.
-    const finalBytes = Buffer.byteLength(prompt, 'utf8');
-    if (finalBytes > MAX_PROMPT_BYTES) {
-      prompt = truncateUtf8(prompt, MAX_PROMPT_BYTES);
+    const joinedBytes = Buffer.byteLength(joined, 'utf8');
+    const needsTruncate = joinedBytes > MAX_PROMPT_BYTES;
+    if (needsTruncate) {
       this.logger.warn(
-        `drop 후에도 prompt 가 ${MAX_PROMPT_BYTES} bytes 초과 (${finalBytes}) — tail truncate 로 강제 cap 적용`,
+        `drop 후에도 prompt 가 ${MAX_PROMPT_BYTES} bytes 초과 (${joinedBytes}) — tail truncate 로 강제 cap 적용`,
       );
       if (!droppedSections.includes('__TAIL_TRUNCATED__')) {
         droppedSections.push('__TAIL_TRUNCATED__');
       }
     }
+    const prompt = needsTruncate
+      ? truncateUtf8(joined, MAX_PROMPT_BYTES)
+      : joined;
 
     return {
       prompt,
@@ -161,9 +164,11 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
   if (buffer.byteLength <= targetBytes) {
     return text;
   }
-  // 뒤에서 byte 잘린 경우 중간에 멀티바이트가 쪼개질 수 있으므로 toString 후 끝 1글자씩 drop.
-  let sliced = buffer.subarray(0, targetBytes).toString('utf8');
-  // utf8 decoder 가 invalid sequence 를 replacement character 로 바꿀 수 있으니 제거.
-  sliced = sliced.replace(/�$/, '');
+  // 뒤에서 byte 잘린 경우 중간에 멀티바이트가 쪼개질 수 있으므로 toString 후 replacement char 제거.
+  // utf8 decoder 가 invalid sequence 를 U+FFFD (�) 로 바꿀 수 있으니 말미에 남았으면 drop.
+  const sliced = buffer
+    .subarray(0, targetBytes)
+    .toString('utf8')
+    .replace(/�$/, '');
   return `${sliced}${TRUNCATE_SUFFIX}`;
 };

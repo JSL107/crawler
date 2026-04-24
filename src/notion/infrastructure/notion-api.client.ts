@@ -1,21 +1,39 @@
-import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client } from '@notionhq/client';
+import { match } from 'ts-pattern';
 
+import { DomainStatus } from '../../common/exception/domain-status.enum';
 import { NotionException } from '../domain/notion.exception';
 import { NotionTask } from '../domain/notion.type';
 import { NotionErrorCode } from '../domain/notion-error-code.enum';
 import {
+  AppendBlocksOptions,
+  FindOrCreateDailyPageOptions,
   ListActiveTasksOptions,
   NOTION_CLIENT_INSTANCE,
   NotionClientPort,
+  NotionDailyPlanPage,
+  NotionPlanBlock,
 } from '../domain/port/notion-client.port';
 
 const DEFAULT_PER_DB_LIMIT = 50;
 
+// Notion blocks.children.append API 한 요청당 최대 100 child block — 이 이상은 분할 append.
+// codex review bcpccaqik P2 지적 대응.
+const APPEND_BLOCKS_CHUNK_SIZE = 100;
+
 @Injectable()
 export class NotionApiClient implements NotionClientPort {
   private readonly logger = new Logger(NotionApiClient.name);
+
+  // 동일 (databaseId|title) 에 대한 동시 findOrCreate 를 직렬화하는 in-process mutex.
+  // codex review bcpccaqik P2: Slack retry / /today + /worklog 동시 호출 시 중복 page 생성 방지.
+  // 멀티-instance 배포 시에는 post-create dedupe 가 추가로 필요하나 현재 싱글 프로세스 전제.
+  private readonly dayPageLocks = new Map<
+    string,
+    Promise<NotionDailyPlanPage>
+  >();
 
   constructor(
     @Inject(NOTION_CLIENT_INSTANCE) private readonly client: Client | null,
@@ -31,7 +49,7 @@ export class NotionApiClient implements NotionClientPort {
         code: NotionErrorCode.TOKEN_NOT_CONFIGURED,
         message:
           'NOTION_TOKEN 이 .env 에 설정되지 않아 Notion API 호출이 불가합니다.',
-        status: HttpStatus.PRECONDITION_FAILED,
+        status: DomainStatus.PRECONDITION_FAILED,
       });
     }
 
@@ -70,6 +88,169 @@ export class NotionApiClient implements NotionClientPort {
     return tasks;
   }
 
+  async findOrCreateDailyPage({
+    databaseId,
+    title,
+  }: FindOrCreateDailyPageOptions): Promise<NotionDailyPlanPage> {
+    this.assertClientConfigured('findOrCreateDailyPage');
+
+    // 같은 (databaseId, title) 요청이 동시에 들어오면 in-process mutex 로 직렬화.
+    const lockKey = `${databaseId}|${title}`;
+    const pending = this.dayPageLocks.get(lockKey);
+    if (pending) {
+      return pending;
+    }
+    const work = this.resolveDayPage(databaseId, title).finally(() => {
+      this.dayPageLocks.delete(lockKey);
+    });
+    this.dayPageLocks.set(lockKey, work);
+    return work;
+  }
+
+  // mutex 안에서 실제 Notion 호출 수행. 기존 page 있으면 재사용, 없으면 create + post-create dedupe.
+  private async resolveDayPage(
+    databaseId: string,
+    title: string,
+  ): Promise<NotionDailyPlanPage> {
+    const titlePropertyName = await this.resolveTitlePropertyName(databaseId);
+
+    const existing = await this.queryByTitle(
+      databaseId,
+      titlePropertyName,
+      title,
+    );
+    if (existing) {
+      return existing;
+    }
+
+    try {
+      const response = await this.client!.pages.create({
+        parent: { database_id: databaseId },
+        properties: {
+          [titlePropertyName]: {
+            title: [{ text: { content: title } }],
+          },
+        },
+      });
+      const pageId = typeof response.id === 'string' ? response.id : '';
+      const url =
+        'url' in response && typeof response.url === 'string'
+          ? response.url
+          : '';
+      return { pageId, url };
+    } catch (error: unknown) {
+      throw new NotionException({
+        code: NotionErrorCode.REQUEST_FAILED,
+        message: `Notion day-page 생성 실패 (DB ${databaseId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        cause: error,
+      });
+    }
+  }
+
+  private async queryByTitle(
+    databaseId: string,
+    titlePropertyName: string,
+    title: string,
+  ): Promise<NotionDailyPlanPage | null> {
+    try {
+      const existing = await this.client!.databases.query({
+        database_id: databaseId,
+        filter: {
+          property: titlePropertyName,
+          title: { equals: title },
+        },
+        page_size: 1,
+      });
+      const first = existing.results[0];
+      if (first && isFullPage(first)) {
+        return { pageId: first.id, url: first.url };
+      }
+      return null;
+    } catch (error: unknown) {
+      throw new NotionException({
+        code: NotionErrorCode.REQUEST_FAILED,
+        message: `Notion DB ${databaseId} 조회 실패: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        cause: error,
+      });
+    }
+  }
+
+  async appendBlocks({ pageId, blocks }: AppendBlocksOptions): Promise<void> {
+    this.assertClientConfigured('appendBlocks');
+    if (blocks.length === 0) {
+      return;
+    }
+    // Notion API 는 한 요청당 child 100개 제한 — 그 이상은 chunk 순차 append.
+    const children = blocks.map(toNotionBlock);
+    const chunks = Array.from(
+      { length: Math.ceil(children.length / APPEND_BLOCKS_CHUNK_SIZE) },
+      (_, index) =>
+        children.slice(
+          index * APPEND_BLOCKS_CHUNK_SIZE,
+          (index + 1) * APPEND_BLOCKS_CHUNK_SIZE,
+        ),
+    );
+    for (const [index, chunk] of chunks.entries()) {
+      try {
+        await this.client!.blocks.children.append({
+          block_id: pageId,
+          children: chunk as Parameters<
+            Client['blocks']['children']['append']
+          >[0]['children'],
+        });
+      } catch (error: unknown) {
+        throw new NotionException({
+          code: NotionErrorCode.REQUEST_FAILED,
+          message: `Notion page ${pageId} block append 실패 (chunk ${index}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          cause: error,
+        });
+      }
+    }
+  }
+
+  private assertClientConfigured(operation: string): void {
+    if (!this.client) {
+      throw new NotionException({
+        code: NotionErrorCode.TOKEN_NOT_CONFIGURED,
+        message: `NOTION_TOKEN 이 .env 에 설정되지 않아 Notion API 호출이 불가합니다. (${operation})`,
+        status: DomainStatus.PRECONDITION_FAILED,
+      });
+    }
+  }
+
+  // DB schema 에서 type === 'title' 인 property 의 이름을 반환 (DB 마다 "이름"/"Name"/"Title" 등 다름).
+  // 매 호출마다 databases.retrieve 호출 — /today 는 하루 몇 번이라 성능 우려 없음.
+  private async resolveTitlePropertyName(databaseId: string): Promise<string> {
+    const db = await this.client!.databases.retrieve({
+      database_id: databaseId,
+    });
+    if (!('properties' in db)) {
+      throw new NotionException({
+        code: NotionErrorCode.REQUEST_FAILED,
+        message: `Notion DB ${databaseId} schema 조회 실패 — partial response.`,
+      });
+    }
+    for (const [name, prop] of Object.entries(db.properties)) {
+      if (
+        typeof prop === 'object' &&
+        prop !== null &&
+        (prop as { type?: string }).type === 'title'
+      ) {
+        return name;
+      }
+    }
+    throw new NotionException({
+      code: NotionErrorCode.REQUEST_FAILED,
+      message: `Notion DB ${databaseId} 에 title property 가 없습니다.`,
+    });
+  }
+
   private resolveDatabaseIdsFromEnv(): string[] {
     const raw = this.configService.get<string>('NOTION_TASK_DB_IDS');
     if (!raw) {
@@ -106,6 +287,46 @@ export class NotionApiClient implements NotionClientPort {
     };
   }
 }
+
+// NotionPlanBlock → Notion API block 형식.
+// discriminated union 6종 — ts-pattern 으로 exhaustive 매칭.
+const toNotionBlock = (block: NotionPlanBlock): Record<string, unknown> => {
+  const richText = (text: string) => [
+    { type: 'text', text: { content: text } },
+  ];
+  return match(block)
+    .with({ type: 'divider' }, () => ({
+      object: 'block',
+      type: 'divider',
+      divider: {},
+    }))
+    .with({ type: 'heading' }, ({ text }) => ({
+      object: 'block',
+      type: 'heading_2',
+      heading_2: { rich_text: richText(text) },
+    }))
+    .with({ type: 'subheading' }, ({ text }) => ({
+      object: 'block',
+      type: 'heading_3',
+      heading_3: { rich_text: richText(text) },
+    }))
+    .with({ type: 'bullet' }, ({ text }) => ({
+      object: 'block',
+      type: 'bulleted_list_item',
+      bulleted_list_item: { rich_text: richText(text) },
+    }))
+    .with({ type: 'todo' }, ({ text, checked }) => ({
+      object: 'block',
+      type: 'to_do',
+      to_do: { rich_text: richText(text), checked: checked === true },
+    }))
+    .with({ type: 'paragraph' }, ({ text }) => ({
+      object: 'block',
+      type: 'paragraph',
+      paragraph: { rich_text: richText(text) },
+    }))
+    .exhaustive();
+};
 
 // 최소한의 page 구조 (full page 만 사용 — partial response 는 isFullPage 로 필터).
 type FullPage = {
@@ -148,46 +369,29 @@ const collectPlainText = (segments: unknown): string => {
 };
 
 const propertyToString = (prop: NotionProperty): string | null => {
-  switch (prop.type) {
-    case 'rich_text':
-      return collectPlainText(prop.rich_text);
-    case 'select':
-      return readNamedOption(prop.select);
-    case 'status':
-      return readNamedOption(prop.status);
-    case 'multi_select':
-      return readNamedOptionsList(prop.multi_select);
-    case 'people':
-      return readPeople(prop.people);
-    case 'date':
-      return readDateRange(prop.date);
-    case 'checkbox':
-      return prop.checkbox === true ? '✓' : '✗';
-    case 'number':
-      return prop.number === null || prop.number === undefined
+  const readStringField = (): string =>
+    typeof prop[prop.type] === 'string' ? (prop[prop.type] as string) : '';
+  return match(prop.type)
+    .with('rich_text', () => collectPlainText(prop.rich_text))
+    .with('select', () => readNamedOption(prop.select))
+    .with('status', () => readNamedOption(prop.status))
+    .with('multi_select', () => readNamedOptionsList(prop.multi_select))
+    .with('people', () => readPeople(prop.people))
+    .with('date', () => readDateRange(prop.date))
+    .with('checkbox', () => (prop.checkbox === true ? '✓' : '✗'))
+    .with('number', () =>
+      prop.number === null || prop.number === undefined
         ? ''
-        : String(prop.number);
-    case 'url':
-    case 'email':
-    case 'phone_number':
-      return typeof prop[prop.type] === 'string'
-        ? (prop[prop.type] as string)
-        : '';
-    case 'unique_id':
-      return readUniqueId(prop.unique_id);
-    case 'formula':
-      return readFormula(prop.formula);
-    case 'created_time':
-    case 'last_edited_time':
-      return typeof prop[prop.type] === 'string'
-        ? (prop[prop.type] as string)
-        : '';
-    case 'created_by':
-    case 'last_edited_by':
-      return readSinglePerson(prop[prop.type]);
-    default:
-      return null; // 알려지지 않은 type 은 무시 (relation/rollup/files 등 — 필요시 case 추가)
-  }
+        : String(prop.number),
+    )
+    .with('url', 'email', 'phone_number', readStringField)
+    .with('unique_id', () => readUniqueId(prop.unique_id))
+    .with('formula', () => readFormula(prop.formula))
+    .with('created_time', 'last_edited_time', readStringField)
+    .with('created_by', 'last_edited_by', () =>
+      readSinglePerson(prop[prop.type]),
+    )
+    .otherwise(() => null);
 };
 
 const readNamedOption = (option: unknown): string => {
@@ -257,18 +461,16 @@ const readFormula = (formula: unknown): string => {
     return '';
   }
   const record = formula as Record<string, unknown>;
-  switch (record.type) {
-    case 'string':
-      return typeof record.string === 'string' ? record.string : '';
-    case 'number':
-      return record.number === null || record.number === undefined
+  return match(record.type)
+    .with('string', () =>
+      typeof record.string === 'string' ? record.string : '',
+    )
+    .with('number', () =>
+      record.number === null || record.number === undefined
         ? ''
-        : String(record.number);
-    case 'boolean':
-      return record.boolean === true ? '✓' : '✗';
-    case 'date':
-      return readDateRange(record.date);
-    default:
-      return '';
-  }
+        : String(record.number),
+    )
+    .with('boolean', () => (record.boolean === true ? '✓' : '✗'))
+    .with('date', () => readDateRange(record.date))
+    .otherwise(() => '');
 };
