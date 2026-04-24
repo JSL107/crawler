@@ -27,7 +27,10 @@ export interface AgentRunRepositoryPort {
   begin(input: BeginAgentRunInput): Promise<{ id: number }>;
   finish(input: FinishAgentRunInput): Promise<void>;
   recordEvidence(input: { agentRunId: number } & EvidenceInput): Promise<void>;
+  // slackUserId 명시 시 inputSnapshot.slackUserId 와 매칭되는 run 만 검색.
+  // /po-shadow 같은 사용자 한정 명령이 다른 사용자 run 을 잡지 않도록 (codex review b6xkjewd2 P2).
   findLatestSucceededRun(input: {
     agentType: AgentType;
+    slackUserId?: string;
   }): Promise<SucceededAgentRunSnapshot | null>;
 }

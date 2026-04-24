@@ -3,7 +3,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { CodeReviewerModule } from './agent/code-reviewer/code-reviewer.module';
+import { ImpactReporterModule } from './agent/impact-reporter/impact-reporter.module';
 import { PmAgentModule } from './agent/pm/pm-agent.module';
+import { PoShadowModule } from './agent/po-shadow/po-shadow.module';
 import { WorkReviewerModule } from './agent/work-reviewer/work-reviewer.module';
 import { AgentRunModule } from './agent-run/agent-run.module';
 import { validateEnv } from './config/app.config';
@@ -39,6 +41,8 @@ import { SlackCollectorModule } from './slack-collector/slack-collector.module';
     PmAgentModule,
     WorkReviewerModule,
     CodeReviewerModule,
+    ImpactReporterModule,
+    PoShadowModule,
     SlackModule,
     CrawlerModule,
   ],

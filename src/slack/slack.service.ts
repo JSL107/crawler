@@ -9,8 +9,16 @@ import { App, LogLevel } from '@slack/bolt';
 
 import { ReviewPullRequestUsecase } from '../agent/code-reviewer/application/review-pull-request.usecase';
 import { PullRequestReview } from '../agent/code-reviewer/domain/code-reviewer.type';
+import { GenerateImpactReportUsecase } from '../agent/impact-reporter/application/generate-impact-report.usecase';
+import { ImpactReport } from '../agent/impact-reporter/domain/impact-reporter.type';
 import { GenerateDailyPlanUsecase } from '../agent/pm/application/generate-daily-plan.usecase';
+import {
+  ContextSummary,
+  SyncContextUsecase,
+} from '../agent/pm/application/sync-context.usecase';
 import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
+import { GeneratePoShadowUsecase } from '../agent/po-shadow/application/generate-po-shadow.usecase';
+import { PoShadowReport } from '../agent/po-shadow/domain/po-shadow.type';
 import { GenerateWorklogUsecase } from '../agent/work-reviewer/application/generate-worklog.usecase';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
 import { DomainException } from '../common/exception/domain.exception';
@@ -28,6 +36,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     private readonly generateDailyPlanUsecase: GenerateDailyPlanUsecase,
     private readonly generateWorklogUsecase: GenerateWorklogUsecase,
     private readonly reviewPullRequestUsecase: ReviewPullRequestUsecase,
+    private readonly syncContextUsecase: SyncContextUsecase,
+    private readonly generateImpactReportUsecase: GenerateImpactReportUsecase,
+    private readonly generatePoShadowUsecase: GeneratePoShadowUsecase,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -189,6 +200,131 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    app.command('/po-shadow', async ({ ack, command, respond }) => {
+      // /po-shadow 는 직전 PM plan 을 PO 시각으로 재검토 — 인자 없이도 OK (extra context optional).
+      const extraContext = command.text?.trim() ?? '';
+      await ack({
+        response_type: 'ephemeral',
+        text: '이대리(PO 모드) 가 직전 plan 을 재검토 중입니다 (10~30초 소요)...',
+      });
+
+      try {
+        const report = await this.generatePoShadowUsecase.execute({
+          extraContext,
+          slackUserId: command.user_id,
+        });
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: formatPoShadowReport(report),
+        });
+      } catch (error: unknown) {
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `GeneratePoShadowUsecase 실패: ${rawMessage}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+
+        const userFacingMessage =
+          error instanceof DomainException
+            ? rawMessage
+            : '내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: `이대리 /po-shadow 실패: ${userFacingMessage}`,
+        });
+      }
+    });
+
+    app.command('/impact-report', async ({ ack, command, respond }) => {
+      const subject = command.text?.trim() ?? '';
+      if (subject.length === 0) {
+        await ack({
+          response_type: 'ephemeral',
+          text: '사용법: `/impact-report <PR 링크 또는 task 설명>` (예: `/impact-report PR #34 — GitHub 커넥터 추가`)',
+        });
+        return;
+      }
+
+      await ack({
+        response_type: 'ephemeral',
+        text: `이대리가 임팩트 보고서를 작성 중입니다 (10~30초 소요)...`,
+      });
+
+      try {
+        const report = await this.generateImpactReportUsecase.execute({
+          subject,
+          slackUserId: command.user_id,
+        });
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: formatImpactReport(report),
+        });
+      } catch (error: unknown) {
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `GenerateImpactReportUsecase 실패: ${rawMessage}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+
+        const userFacingMessage =
+          error instanceof DomainException
+            ? rawMessage
+            : '내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: `이대리 /impact-report 실패: ${userFacingMessage}`,
+        });
+      }
+    });
+
+    app.command('/sync-context', async ({ ack, command, respond }) => {
+      // 모델 호출 없는 가벼운 상태 점검 — 즉시 ack 후 실제 결과로 교체.
+      await ack({
+        response_type: 'ephemeral',
+        text: '이대리가 컨텍스트(GitHub/Notion/Slack/직전 실행)를 재수집 중입니다 (수 초 소요)...',
+      });
+
+      try {
+        const summary = await this.syncContextUsecase.execute({
+          slackUserId: command.user_id,
+        });
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: formatContextSummary(summary),
+        });
+      } catch (error: unknown) {
+        const rawMessage =
+          error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `SyncContextUsecase 실패: ${rawMessage}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+
+        const userFacingMessage =
+          error instanceof DomainException
+            ? rawMessage
+            : '내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+
+        await respond({
+          response_type: 'ephemeral',
+          replace_original: true,
+          text: `이대리 /sync-context 실패: ${userFacingMessage}`,
+        });
+      }
+    });
+
     app.command('/review-pr', async ({ ack, command, respond }) => {
       const prRef = command.text?.trim() ?? '';
       if (prRef.length === 0) {
@@ -237,6 +373,110 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     });
   }
 }
+
+// /po-shadow 결과 — PO 시각의 검토를 한국어 Slack 마크다운으로 렌더.
+export const formatPoShadowReport = (report: PoShadowReport): string => {
+  const lines: string[] = [
+    '*PO Shadow 검토*',
+    '',
+    `🎯 *우선순위 재점검*: ${report.priorityRecheck}`,
+    '',
+    `❓ *진짜 목적 재질문*: ${report.realPurposeQuestion}`,
+    '',
+  ];
+
+  if (report.missingRequirements.length > 0) {
+    lines.push(
+      '*누락 가능 요구사항*',
+      ...report.missingRequirements.map((r) => `• ${r}`),
+      '',
+    );
+  }
+
+  if (report.releaseRisks.length > 0) {
+    lines.push(
+      '*release 리스크*',
+      ...report.releaseRisks.map((r) => `• ${r}`),
+      '',
+    );
+  }
+
+  lines.push('*권고*', report.recommendation);
+  return lines.join('\n');
+};
+
+// /impact-report 결과 — 임팩트 보고서를 한국어 Slack 마크다운으로 렌더.
+export const formatImpactReport = (report: ImpactReport): string => {
+  const lines: string[] = [
+    `*임팩트 보고서* — ${report.subject}`,
+    '',
+    `📌 *Headline*: ${report.headline}`,
+    '',
+  ];
+
+  if (report.quantitative.length > 0) {
+    lines.push(
+      '*정량 근거*',
+      ...report.quantitative.map((item) => `• ${item}`),
+      '',
+    );
+  }
+
+  lines.push('*질적 영향*', report.qualitative, '');
+
+  const renderArea = (label: string, items: string[]): void => {
+    if (items.length === 0) {
+      return;
+    }
+    lines.push(`*${label}*`, ...items.map((i) => `• ${i}`), '');
+  };
+  renderArea('사용자 영향', report.affectedAreas.users);
+  renderArea('팀/협업 영향', report.affectedAreas.team);
+  renderArea('서비스/시스템 영향', report.affectedAreas.service);
+
+  if (report.beforeAfter) {
+    lines.push(
+      '*개선 전/후*',
+      `• 개선 전: ${report.beforeAfter.before}`,
+      `• 개선 후: ${report.beforeAfter.after}`,
+      '',
+    );
+  }
+
+  if (report.risks.length > 0) {
+    lines.push('*리스크*', ...report.risks.map((r) => `• ${r}`), '');
+  }
+
+  lines.push('*판단 근거*', report.reasoning);
+
+  return lines.join('\n');
+};
+
+// /sync-context 결과를 사용자에게 보여줄 한국어 요약 — 5종 source 의 현재 상태 + 직전 실행 메타.
+export const formatContextSummary = (summary: ContextSummary): string => {
+  const githubLine = summary.github.fetchSucceeded
+    ? `• GitHub assigned: issue ${summary.github.issueCount}건 / PR ${summary.github.pullRequestCount}건`
+    : '• GitHub assigned: 수집 실패 (GITHUB_TOKEN 미설정 또는 권한 문제)';
+  const notionLine = `• Notion task DB: ${summary.notion.taskCount}건`;
+  const slackLine = `• Slack 멘션 (${summary.slack.sinceHours}h): ${summary.slack.mentionCount}건`;
+  const previousPlanLine = summary.previousPlan
+    ? `• 직전 PM 실행 #${summary.previousPlan.agentRunId} (${summary.previousPlan.endedAt})`
+    : '• 직전 PM 실행: 없음';
+  const previousWorklogLine = summary.previousWorklog
+    ? `• 직전 Work Reviewer 실행 #${summary.previousWorklog.agentRunId} (${summary.previousWorklog.endedAt})`
+    : '• 직전 Work Reviewer 실행: 없음';
+
+  return [
+    '*컨텍스트 재수집 완료* — 다음 `/today` 호출 시 동일한 데이터를 모델에게 전달합니다.',
+    '',
+    githubLine,
+    notionLine,
+    slackLine,
+    '',
+    previousPlanLine,
+    previousWorklogLine,
+  ].join('\n');
+};
 
 const renderTaskLine = (task: TaskItem): string => {
   const critical = task.isCriticalPath ? '⚠ ' : '';

@@ -72,14 +72,28 @@ export class AgentRunPrismaRepository implements AgentRunRepositoryPort {
     });
   }
 
-  // 가장 최근에 SUCCEEDED 로 끝난 AgentRun 1건. 전일 plan 참조 같은 "직전 실행 컨텍스트" 가 필요한 유스케이스용.
+  // 가장 최근에 SUCCEEDED 로 끝난 AgentRun 1건. 전일 plan 참조 / PO Shadow 검토 같은 "직전 실행 컨텍스트" 용.
+  // slackUserId 명시 시 inputSnapshot.slackUserId JSON path 매칭 — 사용자 한정 명령용
+  // (codex review b6xkjewd2 P2: /po-shadow 가 글로벌 최신 PM run 을 가져와 다른 사용자 plan 검토 방지).
   async findLatestSucceededRun({
     agentType,
+    slackUserId,
   }: {
     agentType: AgentType;
+    slackUserId?: string;
   }): Promise<SucceededAgentRunSnapshot | null> {
+    const where: Prisma.AgentRunWhereInput = {
+      agentType,
+      status: AgentRunStatus.SUCCEEDED,
+    };
+    if (slackUserId) {
+      where.inputSnapshot = {
+        path: ['slackUserId'],
+        equals: slackUserId,
+      };
+    }
     const row = await this.prisma.agentRun.findFirst({
-      where: { agentType, status: AgentRunStatus.SUCCEEDED },
+      where,
       orderBy: { endedAt: 'desc' },
       select: { id: true, output: true, endedAt: true },
     });

@@ -90,12 +90,14 @@ export class AgentRunService {
     }
   }
 
-  // 가장 최근 SUCCEEDED AgentRun 1건 조회 (전일 plan 참조 등 "직전 실행 컨텍스트" 가 필요한 유스케이스용).
+  // 가장 최근 SUCCEEDED AgentRun 1건 조회. slackUserId 옵셔널 — 명시 시 inputSnapshot.slackUserId 매칭.
   async findLatestSucceededRun({
     agentType,
+    slackUserId,
   }: {
     agentType: AgentType;
+    slackUserId?: string;
   }): Promise<SucceededAgentRunSnapshot | null> {
-    return this.repository.findLatestSucceededRun({ agentType });
+    return this.repository.findLatestSucceededRun({ agentType, slackUserId });
   }
 }

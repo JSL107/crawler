@@ -10,6 +10,7 @@ import { DailyPlanContextCollector } from './application/daily-plan-context.coll
 import { DailyPlanEvidenceBuilder } from './application/daily-plan-evidence.builder';
 import { DailyPlanPromptBuilder } from './application/daily-plan-prompt.builder';
 import { GenerateDailyPlanUsecase } from './application/generate-daily-plan.usecase';
+import { SyncContextUsecase } from './application/sync-context.usecase';
 
 @Module({
   imports: [
@@ -22,10 +23,11 @@ import { GenerateDailyPlanUsecase } from './application/generate-daily-plan.usec
   ],
   providers: [
     GenerateDailyPlanUsecase,
+    SyncContextUsecase,
     DailyPlanContextCollector,
     DailyPlanPromptBuilder,
     DailyPlanEvidenceBuilder,
   ],
-  exports: [GenerateDailyPlanUsecase],
+  exports: [GenerateDailyPlanUsecase, SyncContextUsecase],
 })
 export class PmAgentModule {}

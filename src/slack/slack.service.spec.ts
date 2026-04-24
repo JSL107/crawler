@@ -2,6 +2,7 @@ import { PullRequestReview } from '../agent/code-reviewer/domain/code-reviewer.t
 import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
 import {
+  formatContextSummary,
   formatDailyPlan,
   formatDailyReview,
   formatPullRequestReview,
@@ -201,5 +202,64 @@ describe('formatPullRequestReview', () => {
     });
     expect(output).toContain('• 단순 코멘트');
     expect(output).not.toContain('``');
+  });
+});
+
+describe('formatContextSummary', () => {
+  it('GitHub fetch 성공 시 issue/PR 카운트 라인 출력', () => {
+    const output = formatContextSummary({
+      github: { fetchSucceeded: true, issueCount: 3, pullRequestCount: 2 },
+      notion: { taskCount: 5 },
+      slack: { mentionCount: 1, sinceHours: 24 },
+      previousPlan: null,
+      previousWorklog: null,
+    });
+    expect(output).toContain('GitHub assigned: issue 3건 / PR 2건');
+    expect(output).toContain('Notion task DB: 5건');
+    expect(output).toContain('Slack 멘션 (24h): 1건');
+  });
+
+  it('GitHub fetch 실패 시 안내 라인 + 토큰 미설정 힌트', () => {
+    const output = formatContextSummary({
+      github: { fetchSucceeded: false, issueCount: 0, pullRequestCount: 0 },
+      notion: { taskCount: 0 },
+      slack: { mentionCount: 0, sinceHours: 24 },
+      previousPlan: null,
+      previousWorklog: null,
+    });
+    expect(output).toContain('GitHub assigned: 수집 실패');
+    expect(output).toContain('GITHUB_TOKEN 미설정 또는 권한 문제');
+  });
+
+  it('직전 PM/Work Reviewer 실행 메타가 있으면 # ID + endedAt 표기', () => {
+    const output = formatContextSummary({
+      github: { fetchSucceeded: true, issueCount: 0, pullRequestCount: 0 },
+      notion: { taskCount: 0 },
+      slack: { mentionCount: 0, sinceHours: 24 },
+      previousPlan: {
+        agentRunId: 99,
+        endedAt: '2026-04-23T05:00:00.000Z',
+      },
+      previousWorklog: {
+        agentRunId: 100,
+        endedAt: '2026-04-23T08:00:00.000Z',
+      },
+    });
+    expect(output).toContain('직전 PM 실행 #99 (2026-04-23T05:00:00.000Z)');
+    expect(output).toContain(
+      '직전 Work Reviewer 실행 #100 (2026-04-23T08:00:00.000Z)',
+    );
+  });
+
+  it('직전 실행이 없으면 "없음" 표기', () => {
+    const output = formatContextSummary({
+      github: { fetchSucceeded: true, issueCount: 0, pullRequestCount: 0 },
+      notion: { taskCount: 0 },
+      slack: { mentionCount: 0, sinceHours: 24 },
+      previousPlan: null,
+      previousWorklog: null,
+    });
+    expect(output).toContain('직전 PM 실행: 없음');
+    expect(output).toContain('직전 Work Reviewer 실행: 없음');
   });
 });
