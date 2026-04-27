@@ -8,17 +8,23 @@ GitHub / Notion / Postman / Slack 등을 연결해 PM · BE · Code Reviewer · 
 
 - ✅ NestJS + DDD/Hexagonal 기반 골격 (`common/`, `config/`, `prisma/`)
 - ✅ Prisma + PostgreSQL 영속성 계층 (`AgentRun`, `EvidenceRecord` 모델)
-- ✅ Slack Bolt 어댑터 (`src/slack/`) — Socket Mode, `/ping` · `/today` · `/worklog` · `/review-pr` 슬래시 커맨드
-- ✅ Model Router (`src/model-router/`) — Port 인터페이스 + **CodexCliProvider (ChatGPT) / ClaudeCliProvider (Claude)** + Mock (Gemini), 에이전트→모델 라우팅 매핑 + cwd·env allowlist 격리
-- ✅ AgentRun 라이프사이클 (`src/agent-run/`) — `AgentRunService.execute({ begin → run → finish })` 템플릿, EvidenceRecord 자동 기록
-- ✅ GitHub 커넥터 (`src/github/`) — Octokit 기반 read-only, PAT 미설정 시 graceful fallback
-- ✅ Slack collector (`src/slack-collector/`) — WebClient 기반, 본인 멘션 24h 수집 (PM blocker 후보)
-- ✅ Notion 커넥터 (`src/notion/`) — @notionhq/client v2 기반 read-only, 다중 DB 지원, integration token + DB 권한 부여 필요
-- ✅ PM Agent (`src/agent/pm/`) — `/today` 슬래시 커맨드. 입력 5종 graceful 통합: 사용자 텍스트 + GitHub assigned + 전일 PM plan + 전일 worklog + Slack 멘션 + Notion task
-- ✅ Work Reviewer (`src/agent/work-reviewer/`) — `/worklog` 슬래시 커맨드, DailyReview JSON 스키마 파서 (정량 근거 + 개선 전/후 + 다음 액션 + 한 줄 성과)
-- ✅ Code Reviewer (`src/agent/code-reviewer/`) — `/review-pr <URL or owner/repo#N>` 슬래시 커맨드, GitHub diff 가져와 Claude CLI 가 must-fix / nice-to-have / missing-tests / 리뷰 코멘트 초안 생성
-- ✅ 크롤러 도메인 (`src/crawler/`) — Port-Adapter 구조, BullMQ 큐, Puppeteer + Cheerio
-- ⏳ BE 에이전트, Notion 커넥터, 장기 기억 (전일 plan 참조), 토론 모드 — 미구현
+- ✅ Slack Bolt 어댑터 (`src/slack/`) — Socket Mode, 10개 이상의 슬래시 커맨드 및 Interactive 버튼 대응
+- ✅ Model Router (`src/model-router/`) — CodexCliProvider (ChatGPT) / ClaudeCliProvider (Claude) + 자동 격리 실행
+- ✅ AgentRun 라이프사이클 (`src/agent-run/`) — 실행 기록 및 EvidenceRecord 자동 추적
+- ✅ GitHub 커넥터 (`src/github/`) — Octokit 기반 Read/Write (Issue 코멘트 작성 지원)
+- ✅ Slack collector (`src/slack-collector/`) — 본인 멘션 24h 수집
+- ✅ Notion 커넥터 (`src/notion/`) — Read/Write 지원, Daily Plan 자동 기록 (Append) 기능
+- ✅ PM Agent (`src/agent/pm/`) — `/today`. 5종 컨텍스트 자동 수집 및 Notion/GitHub 동기화
+- ✅ Work Reviewer (`src/agent/work-reviewer/`) — `/worklog`. 정량 근거 기반 회고 및 Notion 기록
+- ✅ Code Reviewer (`src/agent/code-reviewer/`) — `/review-pr`. Claude 기반 심층 리뷰
+- ✅ BE 에이전트 (`src/agent/be/`) — `/plan-task`. 구현 계획 및 API 설계 생성
+- ✅ PO Shadow (`src/agent/po-shadow/`) — `/po-shadow`. 계획의 비즈니스 가치 및 리스크 재검토
+- ✅ Impact Reporter (`src/agent/impact-reporter/`) — `/impact-report`. 작업 성과 보고서 자동화
+- ✅ Preview Gate (`src/preview-gate/`) — 외부 시스템 전송 전 사용자 승인(✅/❌) 공통 처리
+- ✅ Morning Briefing (`src/morning-briefing/`) — BullMQ 스케줄러 기반의 매일 아침 자동 브리핑
+- ✅ 크롤러 도메인 (`src/crawler/`) — BullMQ + Puppeteer 기반 아키텍처
+- ⏳ 장기 기억 (Long-term memory), 토론 모드 — 개발 중
+
 
 ## 아키텍처
 
@@ -97,14 +103,15 @@ pnpm format:check          # Prettier 검사
 
 | 키 | 필수 | 설명 |
 |---|---|---|
-| `PORT` | ❌ | HTTP 서버 포트 (기본 3000) |
-| `REDIS_HOST` | ✅ | BullMQ 연결용 Redis 호스트 |
-| `REDIS_PORT` | ✅ | BullMQ 연결용 Redis 포트 |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | ✅ | `docker-compose.yml` 의 postgres 서비스 environment 에 interpolation 되는 값. 저장소에 credential 을 하드코딩하지 않기 위함. 기본값 `idaeri/idaeri/idaeri`. 비밀번호를 강하게 바꾸면 `DATABASE_URL` 도 같이 갱신. |
-| `DATABASE_URL` | ✅ | PostgreSQL 연결 문자열 (Prisma). 앱 부팅 시 config 검증과 Prisma CLI(`db:push` / `db:studio`) 에서 요구. `pnpm install` 의 `prisma generate` 는 schema 파싱만 하므로 DATABASE_URL 없이도 성공. 실제 DB 연결은 PrismaService 의 lazy connect 로 처리. `POSTGRES_*` 자격증명 + 호스트 포트 5434 와 짝을 이룬다. 로컬에 이미 상주 중인 타 프로젝트 5432/5433/6379/6380 점유자와 충돌을 피하기 위한 전용 포트. Redis 도 동일하게 `REDIS_PORT=6381`. |
-| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_SIGNING_SECRET` | ⭕ | Slack 봇 기동용 (Socket Mode). 3개 모두 설정된 경우에만 Slack 봇 기동, 하나라도 비면 앱은 정상 부팅하되 Slack 기능만 비활성화. |
-| `GITHUB_TOKEN` | ⭕ | GitHub Personal Access Token (classic, scope: `repo` + `read:user`). 미설정 시 `/today` 의 evidence 자동 수집은 graceful skip, `/review-pr` 은 호출 시 GITHUB_TOKEN_NOT_CONFIGURED 예외. 발급: https://github.com/settings/tokens |
-| `NOTION_TOKEN` / `NOTION_TASK_DB_IDS` | ⭕ | Notion internal integration token (`secret_...` 또는 `ntn_...`) + 콤마 구분 DB ID 리스트. 각 DB 페이지에서 integration 에 명시 권한 부여 필요(... → Connections → integration 추가). 미설정 시 `/today` 의 Notion evidence 자동 수집은 graceful skip. 발급: https://www.notion.so/my-integrations |
+| `PORT` | ❌ | HTTP 서버 포트 (기본 3002 권장) |
+| `REDIS_HOST` / `REDIS_PORT` | ✅ | BullMQ 연결용 Redis 정보 (6381) |
+| `DATABASE_URL` | ✅ | PostgreSQL 연결 문자열 (5434) |
+| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` / `SLACK_SIGNING_SECRET` | ⭕ | Slack 봇 기동용 (Socket Mode 대응) |
+| `GITHUB_TOKEN` | ⭕ | GitHub PAT (Classic). 미설정 시 GitHub 연동 기능 skip |
+| `NOTION_TOKEN` / `NOTION_TASK_DB_IDS` | ⭕ | Notion API 토큰 및 수집 대상 DB ID 리스트 |
+| `NOTION_DAILY_PLAN_DATABASE_ID` | ⭕ | **[V2]** 일일 회고/계획을 자동 기록할 Notion DB ID |
+| `CLAUDE_MODEL` | ❌ | Claude 에이전트가 사용할 모델 (기본: `opus`, 옵션: `sonnet`, `haiku`) |
+
 
 > 설치와 `.env` 생성 순서는 서로 독립적입니다. `pnpm install` 은 DATABASE_URL 없이도 성공하지만, `pnpm dev` / `pnpm db:push` 이전에는 반드시 `.env` 가 준비돼야 합니다.
 
@@ -118,10 +125,17 @@ pnpm format:check          # Prettier 검사
 
 | Command | 설명 | 에이전트 / 모델 |
 |---|---|---|
-| `/ping` | 이대리 생존 확인. `pong — <ISO 시각>` 응답 | — |
-| `/today <오늘 할 일>` | 자유 텍스트로 받은 할 일을 우선순위 + 오전/오후 + 예상 소요 + 근거로 재구성해 응답 (ephemeral). AgentRun / EvidenceRecord 자동 기록. 소요 10~20초. | PM Agent / ChatGPT (codex CLI) |
-| `/worklog <오늘 한 일>` | 오늘 한 일을 받아 요약 + 정량 근거 + 질적 영향 + 개선 전/후 + 다음 액션 + 한 줄 성과로 재구성해 응답 (ephemeral). 정량 근거 없으면 "추정 수준" 으로 표기 (기획서 §8). 소요 10~20초. | Work Reviewer / ChatGPT (codex CLI) |
-| `/review-pr <PR URL or owner/repo#N>` | GitHub PR 메타 + diff 를 자동으로 가져와 must-fix / nice-to-have / 누락 테스트 / 리뷰 코멘트 초안 / 위험도 / 승인 권고 를 구조화 응답 (ephemeral). diff 50KB / changed-files 500개 캡. 소요 15~40초. | Code Reviewer / Claude (claude CLI) |
+| `/ping` | 이대리 생존 확인 | — |
+| `/today` | 오늘 할 일 계획 생성 (자동 수집 + Notion 기록) | PM Agent / ChatGPT |
+| `/worklog` | 오늘 한 일 회고 (정량 근거 + Notion 기록) | Work Reviewer / ChatGPT |
+| `/plan-task` | 백엔드 구현 계획 및 API 설계 생성 | BE Agent / Claude |
+| `/po-shadow` | 직전 계획에 대한 PO 시점의 재검토 및 리스크 분석 | PO Shadow / ChatGPT |
+| `/impact-report` | 특정 작업에 대한 임팩트 보고서 생성 | Impact Reporter / ChatGPT |
+| `/sync-plan` | 생성된 계획을 외부(GitHub/Notion)로 전송 (승인 게이트) | PM-2 / (System) |
+| `/sync-context` | 외부 컨텍스트(GitHub/Notion/Slack) 강제 재수집 | — |
+| `/quota` | 본인의 에이전트 사용량 통계 확인 | — |
+| `/review-pr` | GitHub PR 심층 리뷰 (Must-fix 등 도출) | Code Reviewer / Claude |
+
 
 ### Slack 봇 설정 (최초 1회)
 
@@ -129,12 +143,18 @@ pnpm format:check          # Prettier 검사
 2. **Socket Mode** 활성화 → App-Level Token 발급 (scope: `connections:write`) → `SLACK_APP_TOKEN`
 3. **OAuth & Permissions** → Bot Token Scopes: `commands`, `chat:write` → 워크스페이스에 install → Bot User OAuth Token → `SLACK_BOT_TOKEN`
 4. **Basic Information** → Signing Secret → `SLACK_SIGNING_SECRET`
-5. **Slash Commands** → 아래 4개 등록 (Request URL 은 Socket Mode 라 불필요하지만 UI 가 요구하면 `https://example.com/command` 같은 더미 값 입력):
+5. **Slash Commands** → 아래 10개 등록 (Request URL 은 Socket Mode 라 불필요하지만 UI 가 요구하면 `https://example.com/command` 같은 더미 값 입력):
    - `/ping` — 이대리 생존 확인
    - `/today` — 오늘 할 일 우선순위 정리 (Usage hint: `<오늘 할 일을 자유롭게 적어주세요>`)
    - `/worklog` — 오늘 한 일 회고 (Usage hint: `<오늘 한 일을 자유롭게 적어주세요>`)
    - `/review-pr` — PR 리뷰 (Usage hint: `<PR URL 또는 owner/repo#번호>`)
-   > 또는 좌측 **`App Manifest`** 에서 `slash_commands` 배열에 네 커맨드를 한 번에 선언하고 **Save Changes** → **Reinstall your app** 으로 반영.
+   - `/plan-task` — 백엔드 구현 계획 (Usage hint: `<구현할 기능 설명 또는 PR URL>`)
+   - `/po-shadow` — 계획 재검토 (Usage hint: `[선택] 추가 컨텍스트`)
+   - `/impact-report` — 임팩트 보고서 (Usage hint: `<작업 설명 또는 PR URL>`)
+   - `/sync-plan` — 외부 시스템 동기화 (Preview Gate 연동)
+   - `/sync-context` — 외부 컨텍스트 강제 재수집
+   - `/quota` — 사용량 통계 확인 (Usage hint: `[today|week]`)
+   > 또는 좌측 **`App Manifest`** 에서 `slash_commands` 배열에 위 커맨드들을 선언하고 **Save Changes** → **Reinstall your app** 으로 반영.
 6. `.env` 에 세 값 채운 뒤 `pnpm dev` 재기동 → `이대리 Slack 봇이 Socket Mode 로 기동되었습니다.` 로그 확인
 7. Slack 채널에서 `/ping` 입력해 응답 확인
 
