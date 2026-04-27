@@ -494,6 +494,15 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
+    app.command('/ping', async ({ ack }) => {
+      // 봇 health check — 모델 호출 / DB 호출 없이 즉시 ack 만 응답.
+      // Slack Bolt Socket Mode 가 살아있고 워크스페이스에 manifest 가 등록돼 있는지 1초 안에 확인 가능.
+      await ack({
+        response_type: 'ephemeral',
+        text: 'pong 🏓 — 이대리 봇 정상 동작 중',
+      });
+    });
+
     app.command('/sync-plan', async ({ ack, command, respond }) => {
       // PM-2: 직전 PM plan 의 GITHUB/NOTION task subtasks 를 외부 시스템에 동기화하기 전 미리보기 + 동의 게이트.
       // SyncPlanUsecase 가 후보 추출 + PreviewAction 생성 → 응답으로 ✅/❌ Block Kit 메시지 노출.
