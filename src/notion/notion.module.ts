@@ -37,6 +37,8 @@ import { NotionApiClient } from './infrastructure/notion-api.client';
     ListActiveTasksUsecase,
     AppendDailyPlanUsecase,
     AppendWorklogUsecase,
+    // PM-2: PmWriteBackApplier 가 PreviewGateModule.forRoot 안에서 NOTION_CLIENT_PORT 를 inject 받기 위해 노출.
+    NOTION_CLIENT_PORT,
   ],
 })
 export class NotionModule {}
