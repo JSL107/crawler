@@ -1,3 +1,5 @@
+import { TriggerType } from '../../../agent-run/domain/agent-run.type';
+
 // 서브 태스크 (WBS) — 에이전트가 큰 태스크를 더 작은 단위로 분할한 결과.
 // 2시간 이상 걸릴 것 같은 태스크만 쪼갠다 (pm-system.prompt 에 규칙).
 export interface SubTask {
@@ -55,6 +57,9 @@ export interface DailyPlan {
 export interface GenerateDailyPlanInput {
   tasksText: string;
   slackUserId: string;
+  // OPS-8: 자동 발송 (Morning Briefing CRON) 등 비-슬래시 진입점에서 호출자가 명시.
+  // 미지정시 수동 /today (default = SLACK_COMMAND_TODAY) 로 간주.
+  triggerType?: TriggerType;
 }
 
 // /today 응답 맨 위에 노출할 "참조 소스" 엔트리 한 건. Slack 사용자가 plan 이

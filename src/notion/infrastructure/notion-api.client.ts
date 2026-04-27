@@ -295,12 +295,24 @@ export class NotionApiClient implements NotionClientPort {
   }
 }
 
+// PRO-2++: link 가 있고 http(s) 스킴이면 rich_text 의 link annotation 적용 (전체 텍스트 클릭 가능).
+// http(s) 외 스킴은 broken link 회피 위해 plain text 로 fallback (Slack renderTitleWithLink 와 동일 정책).
+const isSafeHttpUrl = (url: string): boolean =>
+  url.startsWith('http://') || url.startsWith('https://');
+
+const buildRichText = (
+  text: string,
+  link?: string,
+): Array<Record<string, unknown>> => {
+  if (link && link.length > 0 && isSafeHttpUrl(link)) {
+    return [{ type: 'text', text: { content: text, link: { url: link } } }];
+  }
+  return [{ type: 'text', text: { content: text } }];
+};
+
 // NotionPlanBlock → Notion API block 형식.
 // discriminated union 6종 — ts-pattern 으로 exhaustive 매칭.
 const toNotionBlock = (block: NotionPlanBlock): Record<string, unknown> => {
-  const richText = (text: string) => [
-    { type: 'text', text: { content: text } },
-  ];
   return match(block)
     .with({ type: 'divider' }, () => ({
       object: 'block',
@@ -310,27 +322,30 @@ const toNotionBlock = (block: NotionPlanBlock): Record<string, unknown> => {
     .with({ type: 'heading' }, ({ text }) => ({
       object: 'block',
       type: 'heading_2',
-      heading_2: { rich_text: richText(text) },
+      heading_2: { rich_text: buildRichText(text) },
     }))
     .with({ type: 'subheading' }, ({ text }) => ({
       object: 'block',
       type: 'heading_3',
-      heading_3: { rich_text: richText(text) },
+      heading_3: { rich_text: buildRichText(text) },
     }))
-    .with({ type: 'bullet' }, ({ text }) => ({
+    .with({ type: 'bullet' }, ({ text, link }) => ({
       object: 'block',
       type: 'bulleted_list_item',
-      bulleted_list_item: { rich_text: richText(text) },
+      bulleted_list_item: { rich_text: buildRichText(text, link) },
     }))
-    .with({ type: 'todo' }, ({ text, checked }) => ({
+    .with({ type: 'todo' }, ({ text, checked, link }) => ({
       object: 'block',
       type: 'to_do',
-      to_do: { rich_text: richText(text), checked: checked === true },
+      to_do: {
+        rich_text: buildRichText(text, link),
+        checked: checked === true,
+      },
     }))
-    .with({ type: 'paragraph' }, ({ text }) => ({
+    .with({ type: 'paragraph' }, ({ text, link }) => ({
       object: 'block',
       type: 'paragraph',
-      paragraph: { rich_text: richText(text) },
+      paragraph: { rich_text: buildRichText(text, link) },
     }))
     .exhaustive();
 };

@@ -5,6 +5,7 @@ import { Job } from 'bullmq';
 import { GenerateDailyPlanUsecase } from '../../agent/pm/application/generate-daily-plan.usecase';
 import { PmAgentException } from '../../agent/pm/domain/pm-agent.exception';
 import { PmAgentErrorCode } from '../../agent/pm/domain/pm-agent-error-code.enum';
+import { TriggerType } from '../../agent-run/domain/agent-run.type';
 import {
   formatDailyPlan,
   formatModelFooter,
@@ -43,9 +44,11 @@ export class MorningBriefingConsumer extends WorkerHost {
     try {
       // tasksText 빈 문자열로 호출 — GitHub assigned / Notion task / Slack 멘션 / 직전 PM·Work Reviewer
       // 자동 컨텍스트만으로 plan 을 만든다. 컨텍스트 모두 비어있으면 EMPTY_TASKS_INPUT 예외로 빠진다.
+      // OPS-8: triggerType 명시 — agent_run 테이블에서 자동 발화(MORNING_BRIEFING_CRON) 와 수동 /today 구분.
       const outcome = await this.generateDailyPlanUsecase.execute({
         tasksText: '',
         slackUserId: ownerSlackUserId,
+        triggerType: TriggerType.MORNING_BRIEFING_CRON,
       });
 
       const text =

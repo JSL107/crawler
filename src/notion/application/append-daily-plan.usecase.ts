@@ -83,18 +83,27 @@ const getKstHourMinute = (): string => {
 // DailyPlan → Check in 섹션 blocks.
 // 사용자 "일일 회고" 템플릿 포맷: Check in HH:MM (heading2) / 오늘의 할 일 (heading3) / 최우선·오전·오후·Blocker 구조.
 // TaskItem 의 subtasks (WBS) 는 부모 todo 뒤에 들여쓴 todo 로, isCriticalPath 는 제목 앞에 ⚠ 마커로.
+// PRO-2++: task.url 이 있으면 해당 block 에 link 를 입혀 Notion 페이지에서도 PR/Issue/Notion 으로 클릭 이동 가능.
 const buildCheckInBlocks = (plan: DailyPlan): NotionPlanBlock[] => {
   const blocks: NotionPlanBlock[] = [
     { type: 'heading', text: `Check in ${getKstHourMinute()}` },
     { type: 'subheading', text: '오늘의 할 일' },
-    { type: 'bullet', text: `최우선: ${renderTaskTitle(plan.topPriority)}` },
+    {
+      type: 'bullet',
+      text: `최우선: ${renderTaskTitle(plan.topPriority)}`,
+      link: plan.topPriority.url,
+    },
   ];
   appendSubtaskBlocks(blocks, plan.topPriority);
 
   if (plan.morning.length > 0) {
     blocks.push({ type: 'bullet', text: '오전' });
     for (const task of plan.morning) {
-      blocks.push({ type: 'todo', text: renderTaskTitle(task) });
+      blocks.push({
+        type: 'todo',
+        text: renderTaskTitle(task),
+        link: task.url,
+      });
       appendSubtaskBlocks(blocks, task);
     }
   }
@@ -102,7 +111,11 @@ const buildCheckInBlocks = (plan: DailyPlan): NotionPlanBlock[] => {
   if (plan.afternoon.length > 0) {
     blocks.push({ type: 'bullet', text: '오후' });
     for (const task of plan.afternoon) {
-      blocks.push({ type: 'todo', text: renderTaskTitle(task) });
+      blocks.push({
+        type: 'todo',
+        text: renderTaskTitle(task),
+        link: task.url,
+      });
       appendSubtaskBlocks(blocks, task);
     }
   }

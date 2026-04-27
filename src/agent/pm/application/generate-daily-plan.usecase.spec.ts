@@ -350,7 +350,7 @@ describe('GenerateDailyPlanUsecase', () => {
     });
   });
 
-  it('AgentRunService 에 PM / SLACK_COMMAND_TODAY 가 전달된다', async () => {
+  it('AgentRunService 에 PM / SLACK_COMMAND_TODAY 가 전달된다 (default)', async () => {
     listAssignedTasksExecute.mockResolvedValue({
       issues: [],
       pullRequests: [],
@@ -361,6 +361,32 @@ describe('GenerateDailyPlanUsecase', () => {
     const call = agentRunServiceExecute.mock.calls[0][0];
     expect(call.agentType).toBe(AgentType.PM);
     expect(call.triggerType).toBe('SLACK_COMMAND_TODAY');
+  });
+
+  it('OPS-8: 호출자가 triggerType 명시하면 그 값으로 AgentRun 기록 (Morning Briefing CRON)', async () => {
+    // 자동 컨텍스트 1건 있어 assertNonEmptyInput 통과 (CRON 발송 시 자동 수집 케이스 시뮬).
+    listAssignedTasksExecute.mockResolvedValue({
+      issues: [
+        {
+          number: 12,
+          title: 't',
+          repo: 'a/b',
+          url: 'u',
+          labels: [],
+          updatedAt: 'x',
+        },
+      ],
+      pullRequests: [],
+    });
+
+    await usecase.execute({
+      tasksText: '',
+      slackUserId: 'U123',
+      triggerType: 'MORNING_BRIEFING_CRON' as never,
+    });
+
+    const call = agentRunServiceExecute.mock.calls[0][0];
+    expect(call.triggerType).toBe('MORNING_BRIEFING_CRON');
   });
 
   describe('전일 plan 참조 (옵션 C)', () => {

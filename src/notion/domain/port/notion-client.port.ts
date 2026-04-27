@@ -15,12 +15,14 @@ export interface ListActiveTasksOptions {
 
 // Day-page 블록 변환용 추상 타입. 도메인이 Notion SDK 에 의존하지 않도록 block 종류만 enum 형태로 노출.
 // 어댑터가 Notion block 형식 (heading_2 / heading_3 / bulleted_list_item / paragraph / to_do / divider) 으로 변환.
+// PRO-2++: bullet / paragraph / todo 3종에 optional `link?: string` — 있으면 전체 text 가 클릭 가능한 링크가 된다.
+// http(s) 가 아닌 url 은 어댑터가 plain text 로 fallback 처리 (broken link 회피).
 export type NotionPlanBlock =
   | { type: 'heading'; text: string } // heading_2 — "Check in HH:MM" 등
   | { type: 'subheading'; text: string } // heading_3 — "오늘의 할 일" 등
-  | { type: 'bullet'; text: string }
-  | { type: 'paragraph'; text: string }
-  | { type: 'todo'; text: string; checked?: boolean }
+  | { type: 'bullet'; text: string; link?: string }
+  | { type: 'paragraph'; text: string; link?: string }
+  | { type: 'todo'; text: string; checked?: boolean; link?: string }
   | { type: 'divider' };
 
 export interface FindOrCreateDailyPageOptions {

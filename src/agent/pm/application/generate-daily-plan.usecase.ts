@@ -72,8 +72,11 @@ export class GenerateDailyPlanUsecase {
   async execute({
     tasksText,
     slackUserId,
+    triggerType,
   }: GenerateDailyPlanInput): Promise<AgentRunOutcome<DailyPlanResult>> {
     const userText = tasksText.trim();
+    // OPS-8: 호출자가 명시한 triggerType 사용 (Morning Briefing CRON 등). 미지정시 수동 /today.
+    const effectiveTriggerType = triggerType ?? TriggerType.SLACK_COMMAND_TODAY;
 
     // planDate 는 request 진입 "첫 await 이전" 시점에 고정한다.
     // context collect 과 model completion 합쳐 10~40s 걸리므로 그 사이 midnight 를 넘기면
@@ -98,7 +101,7 @@ export class GenerateDailyPlanUsecase {
 
     const outcome = await this.agentRunService.execute<DailyPlan>({
       agentType: AgentType.PM,
-      triggerType: TriggerType.SLACK_COMMAND_TODAY,
+      triggerType: effectiveTriggerType,
       inputSnapshot,
       evidence,
       run: async ({ agentRunId }) => {
@@ -232,48 +235,68 @@ export class GenerateDailyPlanUsecase {
 
 // DailyPlanContext 에서 Slack 응답에 노출할 "참조 소스" 엔트리 추출.
 // 사용자가 plan 이 어떤 데이터에 근거해 만들어졌는지 즉시 확인할 수 있도록 제목 + URL 을 제공.
+// PM-4: notion 모듈의 `let 제거 + 선언적 변환` 컨벤션과 일관 — push 대신 source 별 배열 spread.
 const extractSources = (context: DailyPlanContext): DailyPlanSource[] => {
-  const sources: DailyPlanSource[] = [];
-  if (context.githubTasks) {
-    for (const issue of context.githubTasks.issues) {
-      sources.push({
-        type: 'github_issue',
-        label: `${issue.repo}#${issue.number} — ${issue.title}`,
-        url: issue.url,
-      });
-    }
-    for (const pr of context.githubTasks.pullRequests) {
-      sources.push({
-        type: 'github_pull_request',
-        label: `${pr.repo}#${pr.number} — ${pr.title}${pr.draft ? ' [draft]' : ''}`,
-        url: pr.url,
-      });
-    }
-  }
-  for (const task of context.notionTasks) {
-    sources.push({
+  const githubSources: DailyPlanSource[] = context.githubTasks
+    ? [
+        ...context.githubTasks.issues.map(
+          (issue): DailyPlanSource => ({
+            type: 'github_issue',
+            label: `${issue.repo}#${issue.number} — ${issue.title}`,
+            url: issue.url,
+          }),
+        ),
+        ...context.githubTasks.pullRequests.map(
+          (pr): DailyPlanSource => ({
+            type: 'github_pull_request',
+            label: `${pr.repo}#${pr.number} — ${pr.title}${pr.draft ? ' [draft]' : ''}`,
+            url: pr.url,
+          }),
+        ),
+      ]
+    : [];
+
+  const notionSources: DailyPlanSource[] = context.notionTasks.map(
+    (task): DailyPlanSource => ({
       type: 'notion_task',
       label: task.title,
       url: task.url,
-    });
-  }
-  if (context.slackMentions.length > 0) {
-    sources.push({
-      type: 'slack_mention',
-      label: `최근 ${SLACK_MENTION_SINCE_HOURS}h 본인 멘션 ${context.slackMentions.length}건`,
-    });
-  }
-  if (context.previousPlan) {
-    sources.push({
-      type: 'previous_plan',
-      label: `직전 PM 실행 #${context.previousPlan.agentRunId} (${context.previousPlan.endedAt.toISOString().slice(0, 10)})`,
-    });
-  }
-  if (context.previousWorklog) {
-    sources.push({
-      type: 'previous_worklog',
-      label: `직전 Work Reviewer 실행 #${context.previousWorklog.agentRunId} (${context.previousWorklog.endedAt.toISOString().slice(0, 10)})`,
-    });
-  }
-  return sources;
+    }),
+  );
+
+  const slackSources: DailyPlanSource[] =
+    context.slackMentions.length > 0
+      ? [
+          {
+            type: 'slack_mention',
+            label: `최근 ${SLACK_MENTION_SINCE_HOURS}h 본인 멘션 ${context.slackMentions.length}건`,
+          },
+        ]
+      : [];
+
+  const previousPlanSources: DailyPlanSource[] = context.previousPlan
+    ? [
+        {
+          type: 'previous_plan',
+          label: `직전 PM 실행 #${context.previousPlan.agentRunId} (${context.previousPlan.endedAt.toISOString().slice(0, 10)})`,
+        },
+      ]
+    : [];
+
+  const previousWorklogSources: DailyPlanSource[] = context.previousWorklog
+    ? [
+        {
+          type: 'previous_worklog',
+          label: `직전 Work Reviewer 실행 #${context.previousWorklog.agentRunId} (${context.previousWorklog.endedAt.toISOString().slice(0, 10)})`,
+        },
+      ]
+    : [];
+
+  return [
+    ...githubSources,
+    ...notionSources,
+    ...slackSources,
+    ...previousPlanSources,
+    ...previousWorklogSources,
+  ];
 };

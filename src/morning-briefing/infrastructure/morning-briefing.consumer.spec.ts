@@ -48,11 +48,12 @@ describe('MorningBriefingConsumer', () => {
     data: MorningBriefingJobData,
   ): Job<MorningBriefingJobData> => ({ data }) as Job<MorningBriefingJobData>;
 
-  it('GenerateDailyPlanUsecase 를 owner ID + 빈 텍스트로 호출 (자동 컨텍스트 only)', async () => {
+  it('GenerateDailyPlanUsecase 를 owner ID + 빈 텍스트 + MORNING_BRIEFING_CRON triggerType 으로 호출', async () => {
     await consumer.process(buildJob({ ownerSlackUserId: 'U1', target: 'C99' }));
     expect(generateDailyPlan).toHaveBeenCalledWith({
       tasksText: '',
       slackUserId: 'U1',
+      triggerType: 'MORNING_BRIEFING_CRON',
     });
   });
 
