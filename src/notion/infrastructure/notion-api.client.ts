@@ -220,15 +220,22 @@ export class NotionApiClient implements NotionClientPort {
   }: ReplaceCheckInSectionOptions): Promise<void> {
     this.assertClientConfigured('replaceCheckInSection');
 
-    // per-page mutex — 동시 /today 두 건이 같은 초기 state 를 읽어 각자 append 하는 race 방지.
-    const pending = this.checkInLocks.get(pageId);
-    if (pending) {
-      await pending;
-    }
-    const work = this.runReplaceCheckInSection(pageId, blocks).finally(() => {
-      this.checkInLocks.delete(pageId);
-    });
+    // per-page mutex — 동시 /today N건이 직렬 실행되도록 chain-and-replace.
+    // `await pending` 후 새 work 생성 패턴은 N≥3 일 때 첫 한 건만 직렬화되고 나머지가
+    // 동시에 풀리는 race 가 있어 (codex review 64070f3 P2), previous.then(...) 으로
+    // map 항목 자체를 chain 시킨다. 모든 후속 호출이 이전 work 의 완료를 보장 후 시작.
+    const previous = this.checkInLocks.get(pageId) ?? Promise.resolve();
+    // 이전 호출이 throw 했어도 후속 호출은 정상 진행돼야 한다 — catch 로 swallow.
+    const work = previous
+      .catch(() => undefined)
+      .then(() => this.runReplaceCheckInSection(pageId, blocks));
     this.checkInLocks.set(pageId, work);
+    work.finally(() => {
+      // 후속 호출이 이미 lock 을 교체했을 수 있으므로 자기 work 일 때만 삭제.
+      if (this.checkInLocks.get(pageId) === work) {
+        this.checkInLocks.delete(pageId);
+      }
+    });
     return work;
   }
 
