@@ -186,10 +186,9 @@
   - Notion `databases.query` 에 `last_edited_time` `on_or_after` 필터 추가 ([notion-api.client.ts](src/notion/infrastructure/notion-api.client.ts) `queryDbOrNull`).
   - 공통 컷오프 헬퍼 [`stale-data-cutoff.util.ts`](src/common/util/stale-data-cutoff.util.ts) — usecase 두 곳 (List Assigned / List Active Tasks) 이 ConfigService 로 동일 정책 공유.
 
-- **OPS-7 MorningBriefing Layer 정화 (codex P0 deferred)**
-  - 현재 `MorningBriefingConsumer` (Infrastructure) 가 `SlackService` (Slack 어댑터) 와 `formatDailyPlan/formatModelFooter` (presentation) 를 직접 import — CODE_RULES §2.7 의 의존 방향과 충돌.
-  - 단기: `SlackNotifierPort` (`Symbol` token) 도입, `SlackService` 가 구현체로 bind. Consumer 는 port 만 의존.
-  - 장기: presentation 포맷 함수들을 `src/slack/format/` 디렉토리로 분리 (Service 와 별도). Consumer 가 format 모듈만 import.
+- **OPS-7 MorningBriefing Layer 정화 ✅ 부분 완료**
+  - 단기: `SlackNotifierPort` ([slack-notifier.port.ts](src/morning-briefing/domain/port/slack-notifier.port.ts)) 도입, `SlackService` 를 `useExisting` 로 bind. Consumer 는 더이상 `SlackService` 를 직접 의존하지 않고 port 만 본다.
+  - **장기 (deferred)**: presentation 포맷 함수들 (`formatDailyPlan` / `formatModelFooter`) 을 `src/slack/format/` 디렉토리로 분리해 Consumer 가 Slack 어댑터의 export 를 import 하지 않게 정화. 현재는 함수만 import 하므로 의존방향 위반 정도가 약함.
 
 - **OPS-8 TriggerType 분리 (omc P2 deferred)**
   - Morning Briefing CRON 호출이 현재 `TriggerType.SLACK_COMMAND_TODAY` 로 `agent_run` 에 기록 — 수동 `/today` 와 구분 불가.
@@ -231,7 +230,7 @@
 | **P2** | OPS-3 | Slack Reaction → Inbox | Med | Low | slack-collector 확장 |
 | **P2** | OPS-5 | Failure Replay | Low | Low | 없음 |
 | **✅ Done** | OPS-6 | Stale Data Filter — 60일 default (env override) | High | Low | — |
-| **P2** | OPS-7 | MorningBriefing Layer 정화 (SlackNotifierPort 도입) | Med | Low | 없음 |
+| **✅ Done** | OPS-7 | MorningBriefing Layer 정화 — SlackNotifierPort 추출 (presentation 분리는 deferred) | Med | Low | — |
 | **P2** | OPS-8 | TriggerType.MORNING_BRIEFING_CRON 분리 | Med | Low | 없음 |
 | **P2** | PM-4 | extractSources 선언적 변환 | Low | Low | 없음 |
 | **P2** | QA-1 | Reviewer 룰셋 학습 | Med | Low | review history 테이블 |

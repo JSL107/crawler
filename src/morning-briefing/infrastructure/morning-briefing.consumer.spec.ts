@@ -5,8 +5,8 @@ import { PmAgentException } from '../../agent/pm/domain/pm-agent.exception';
 import { DailyPlan } from '../../agent/pm/domain/pm-agent.type';
 import { PmAgentErrorCode } from '../../agent/pm/domain/pm-agent-error-code.enum';
 import { DomainStatus } from '../../common/exception/domain-status.enum';
-import { SlackService } from '../../slack/slack.service';
 import { MorningBriefingJobData } from '../domain/morning-briefing.type';
+import { SlackNotifierPort } from '../domain/port/slack-notifier.port';
 import { MorningBriefingConsumer } from './morning-briefing.consumer';
 
 describe('MorningBriefingConsumer', () => {
@@ -40,7 +40,7 @@ describe('MorningBriefingConsumer', () => {
 
     consumer = new MorningBriefingConsumer(
       { execute: generateDailyPlan } as unknown as GenerateDailyPlanUsecase,
-      { postMessage } as unknown as SlackService,
+      { postMessage } as unknown as SlackNotifierPort,
     );
   });
 
