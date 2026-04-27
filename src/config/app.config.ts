@@ -66,6 +66,29 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   NOTION_DAILY_PLAN_DATABASE_ID?: string;
+
+  // PRO-1 Morning Briefing CRON 설정.
+  // - OWNER_SLACK_USER_ID: PM 컨텍스트의 "누구의 plan 인지" 식별자 (GitHub assigned / Slack 멘션 fetch 기준).
+  //   미설정 = 모듈 자동 비활성화 (graceful, 1인 봇이라 단일 owner).
+  // - DELIVERY_TARGETS: 콤마 구분 발송 대상 — 슬랙 user ID(U...) 또는 채널 ID(C.../G...) 혼용.
+  //   빈 값이면 OWNER 의 DM 으로 발송. private 채널은 봇 invite 필요.
+  // - CRON: BullMQ repeatable cron pattern (default: 매일 08:30).
+  // - TIMEZONE: cron 해석 기준 (default: Asia/Seoul).
+  @IsOptional()
+  @IsString()
+  MORNING_BRIEFING_OWNER_SLACK_USER_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  MORNING_BRIEFING_DELIVERY_TARGETS?: string;
+
+  @IsOptional()
+  @IsString()
+  MORNING_BRIEFING_CRON?: string;
+
+  @IsOptional()
+  @IsString()
+  MORNING_BRIEFING_TIMEZONE?: string;
 }
 
 export const validateEnv = (config: Record<string, unknown>) => {

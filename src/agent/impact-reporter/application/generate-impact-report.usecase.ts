@@ -1,6 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
-import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import {
+  AgentRunOutcome,
+  AgentRunService,
+} from '../../../agent-run/application/agent-run.service';
 import { TriggerType } from '../../../agent-run/domain/agent-run.type';
 import { DomainStatus } from '../../../common/exception/domain-status.enum';
 import {
@@ -37,7 +40,7 @@ export class GenerateImpactReportUsecase {
   async execute({
     subject,
     slackUserId,
-  }: GenerateImpactReportInput): Promise<ImpactReport> {
+  }: GenerateImpactReportInput): Promise<AgentRunOutcome<ImpactReport>> {
     const trimmed = subject.trim();
     if (trimmed.length === 0) {
       throw new ImpactReporterException({

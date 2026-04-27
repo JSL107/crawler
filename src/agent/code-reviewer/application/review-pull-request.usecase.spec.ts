@@ -33,8 +33,12 @@ describe('ReviewPullRequestUsecase', () => {
   beforeEach(() => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
-      const execution = await input.run();
-      return execution.result;
+      const execution = await input.run({ agentRunId: 55 });
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 55,
+      };
     });
     githubClient = {
       listMyAssignedTasks: jest.fn(),
@@ -81,7 +85,9 @@ describe('ReviewPullRequestUsecase', () => {
       slackUserId: 'U123',
     });
 
-    expect(result).toEqual(validReview);
+    expect(result.result).toEqual(validReview);
+    expect(result.modelUsed).toBe('claude-cli');
+    expect(result.agentRunId).toBe(55);
     expect(githubClient.getPullRequest).toHaveBeenCalledWith({
       repo: 'foo/bar',
       number: 34,

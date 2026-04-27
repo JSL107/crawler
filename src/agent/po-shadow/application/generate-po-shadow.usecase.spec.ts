@@ -50,7 +50,11 @@ describe('GeneratePoShadowUsecase', () => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
       const execution = await input.run({ agentRunId: 11 });
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 11,
+      };
     });
     agentRunServiceFindLatest = jest.fn().mockResolvedValue({
       id: 99,
@@ -99,7 +103,9 @@ describe('GeneratePoShadowUsecase', () => {
       extraContext: 'v1.2 release 직전',
       slackUserId: 'U1',
     });
-    expect(result).toEqual(validReport);
+    expect(result.result).toEqual(validReport);
+    expect(result.modelUsed).toBe('codex-cli');
+    expect(result.agentRunId).toBe(11);
   });
 
   it('AgentRunService 에 PO_SHADOW + SLACK_COMMAND_PO_SHADOW 전달 + evidence', async () => {

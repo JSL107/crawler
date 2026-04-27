@@ -12,6 +12,7 @@ import {
 } from '../domain/model-router.type';
 import { ModelProviderPort } from '../domain/port/model-provider.port';
 import { buildSafeChildEnv } from './cli-process.util';
+import { redactPii } from './pii-redaction.util';
 
 const GEMINI_EXECUTABLE = 'gemini';
 const GEMINI_DEFAULT_TIMEOUT_MS = 180_000;
@@ -108,10 +109,13 @@ export class GeminiCliProvider implements ModelProviderPort {
 
     try {
       const args = buildGeminiArgs({ systemPrompt: request.systemPrompt });
-      const stdinPayload = buildGeminiStdinPayload({
-        prompt: request.prompt,
-        systemPrompt: request.systemPrompt,
-      });
+      // OPS-4: 외부 CLI 로 stdin 흘려보내기 직전 토큰 류 시크릿 redact.
+      const stdinPayload = redactPii(
+        buildGeminiStdinPayload({
+          prompt: request.prompt,
+          systemPrompt: request.systemPrompt,
+        }),
+      );
       const stdout = await this.spawnGemini({
         args,
         cwd: workDir,

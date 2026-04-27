@@ -2,6 +2,7 @@ import {
   DailyPlan,
   SubTask,
   TaskItem,
+  TaskLineage,
   TaskSource,
   VarianceAnalysis,
 } from '../pm-agent.type';
@@ -12,6 +13,12 @@ const TASK_SOURCES: ReadonlySet<TaskSource> = new Set([
   'SLACK',
   'USER_INPUT',
   'ROLLOVER',
+]);
+
+const TASK_LINEAGES: ReadonlySet<TaskLineage> = new Set([
+  'NEW',
+  'CARRIED',
+  'POSTPONED',
 ]);
 
 // DailyPlan shape 검증 — parser / previous-plan-formatter / migration 어댑터가 공유.
@@ -37,14 +44,32 @@ export const isTaskItemShape = (value: unknown): value is TaskItem => {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    typeof record.title === 'string' &&
-    typeof record.source === 'string' &&
-    TASK_SOURCES.has(record.source as TaskSource) &&
-    isSubTaskArray(record.subtasks) &&
-    typeof record.isCriticalPath === 'boolean'
-  );
+  if (
+    !(
+      typeof record.id === 'string' &&
+      typeof record.title === 'string' &&
+      typeof record.source === 'string' &&
+      TASK_SOURCES.has(record.source as TaskSource) &&
+      isSubTaskArray(record.subtasks) &&
+      typeof record.isCriticalPath === 'boolean'
+    )
+  ) {
+    return false;
+  }
+  // PRO-2+: lineage / url 은 optional — 있으면 형식만 검증, 없으면 통과 (구버전 plan 호환).
+  if (
+    record.lineage !== undefined &&
+    !(
+      typeof record.lineage === 'string' &&
+      TASK_LINEAGES.has(record.lineage as TaskLineage)
+    )
+  ) {
+    return false;
+  }
+  if (record.url !== undefined && typeof record.url !== 'string') {
+    return false;
+  }
+  return true;
 };
 
 const isSubTaskArray = (value: unknown): value is SubTask[] =>

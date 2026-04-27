@@ -39,7 +39,11 @@ describe('GenerateImpactReportUsecase', () => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
       const execution = await input.run({ agentRunId: 7 });
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 7,
+      };
     });
     githubClient = {
       listMyAssignedTasks: jest.fn(),
@@ -91,7 +95,9 @@ describe('GenerateImpactReportUsecase', () => {
       subject: 'PR #34',
       slackUserId: 'U1',
     });
-    expect(result).toEqual(validReport);
+    expect(result.result).toEqual(validReport);
+    expect(result.modelUsed).toBe('codex-cli');
+    expect(result.agentRunId).toBe(7);
   });
 
   it('모델 응답이 schema 와 안 맞으면 INVALID_MODEL_OUTPUT 예외', async () => {
@@ -193,7 +199,7 @@ describe('GenerateImpactReportUsecase', () => {
         slackUserId: 'U1',
       });
 
-      expect(result).toEqual(validReport);
+      expect(result.result).toEqual(validReport);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.prGroundingAttempted).toBe(true);
       expect(call.inputSnapshot.prGroundingSucceeded).toBe(false);

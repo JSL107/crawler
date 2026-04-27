@@ -54,7 +54,11 @@ describe('GenerateDailyPlanUsecase', () => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
       const execution = await input.run({ agentRunId: 42 });
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 42,
+      };
     });
     agentRunServiceFindLatest = jest.fn().mockResolvedValue(null);
     dailyPlanRecord = jest.fn().mockResolvedValue({
@@ -149,7 +153,7 @@ describe('GenerateDailyPlanUsecase', () => {
       slackUserId: 'U123',
     });
 
-    expect(result).toEqual(validPlan);
+    expect(result.result.plan).toEqual(validPlan);
     const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
     expect(promptArg).toContain('[사용자 입력]');
     expect(promptArg).not.toContain('[GitHub 에서');
@@ -263,7 +267,7 @@ describe('GenerateDailyPlanUsecase', () => {
       slackUserId: 'U123',
     });
 
-    expect(result).toEqual(validPlan);
+    expect(result.result.plan).toEqual(validPlan);
   });
 
   it('모델 응답이 JSON 스키마에 안 맞으면 INVALID_MODEL_OUTPUT 예외', async () => {
@@ -313,7 +317,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
     });
 
     it('Notion AppendDailyPlanUsecase 도 plan 생성 후 호출된다 (graceful)', async () => {
@@ -342,7 +346,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
     });
   });
 
@@ -431,7 +435,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U123',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
       const promptArg = modelRouter.route.mock.calls[0][0].request.prompt;
       expect(promptArg).not.toContain('[직전 PM 실행');
     });
@@ -589,7 +593,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.previousWorklogReferenced).toBe(false);
     });
@@ -668,7 +672,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.slackMentionCount).toBe(0);
     });
@@ -743,7 +747,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
       const call = agentRunServiceExecute.mock.calls[0][0];
       expect(call.inputSnapshot.notionTaskCount).toBe(0);
     });
@@ -760,7 +764,7 @@ describe('GenerateDailyPlanUsecase', () => {
         slackUserId: 'U',
       });
 
-      expect(result).toEqual(validPlan);
+      expect(result.result.plan).toEqual(validPlan);
     });
 
     it('userText / GitHub / Notion 모두 비어 있으면 EMPTY_TASKS_INPUT 예외', async () => {

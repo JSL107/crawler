@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import {
+  AgentRunOutcome,
+  AgentRunService,
+} from '../../../agent-run/application/agent-run.service';
 import { TriggerType } from '../../../agent-run/domain/agent-run.type';
 import { DomainStatus } from '../../../common/exception/domain-status.enum';
 import { DailyPlanService } from '../../../daily-plan/application/daily-plan.service';
@@ -11,6 +14,8 @@ import { PmAgentException } from '../domain/pm-agent.exception';
 import {
   DailyPlan,
   DailyPlanInputSnapshot,
+  DailyPlanResult,
+  DailyPlanSource,
   GenerateDailyPlanInput,
 } from '../domain/pm-agent.type';
 import { PmAgentErrorCode } from '../domain/pm-agent-error-code.enum';
@@ -67,7 +72,7 @@ export class GenerateDailyPlanUsecase {
   async execute({
     tasksText,
     slackUserId,
-  }: GenerateDailyPlanInput): Promise<DailyPlan> {
+  }: GenerateDailyPlanInput): Promise<AgentRunOutcome<DailyPlanResult>> {
     const userText = tasksText.trim();
 
     // planDate 는 request 진입 "첫 await 이전" 시점에 고정한다.
@@ -91,7 +96,7 @@ export class GenerateDailyPlanUsecase {
       truncated,
     });
 
-    return this.agentRunService.execute({
+    const outcome = await this.agentRunService.execute<DailyPlan>({
       agentType: AgentType.PM,
       triggerType: TriggerType.SLACK_COMMAND_TODAY,
       inputSnapshot,
@@ -101,17 +106,27 @@ export class GenerateDailyPlanUsecase {
           agentType: AgentType.PM,
           request: { prompt, systemPrompt: PM_SYSTEM_PROMPT },
         });
-        const plan = parseDailyPlan(completion.text);
+        const innerPlan = parseDailyPlan(completion.text);
 
-        await this.persistPlanGracefully({ plan, agentRunId, planDate });
+        await this.persistPlanGracefully({
+          plan: innerPlan,
+          agentRunId,
+          planDate,
+        });
 
         return {
-          result: plan,
+          result: innerPlan,
           modelUsed: completion.modelUsed,
-          output: plan,
+          output: innerPlan,
         };
       },
     });
+
+    return {
+      result: { plan: outcome.result, sources: extractSources(context) },
+      modelUsed: outcome.modelUsed,
+      agentRunId: outcome.agentRunId,
+    };
   }
 
   private assertNonEmptyInput(context: DailyPlanContext): void {
@@ -214,3 +229,51 @@ export class GenerateDailyPlanUsecase {
     };
   }
 }
+
+// DailyPlanContext 에서 Slack 응답에 노출할 "참조 소스" 엔트리 추출.
+// 사용자가 plan 이 어떤 데이터에 근거해 만들어졌는지 즉시 확인할 수 있도록 제목 + URL 을 제공.
+const extractSources = (context: DailyPlanContext): DailyPlanSource[] => {
+  const sources: DailyPlanSource[] = [];
+  if (context.githubTasks) {
+    for (const issue of context.githubTasks.issues) {
+      sources.push({
+        type: 'github_issue',
+        label: `${issue.repo}#${issue.number} — ${issue.title}`,
+        url: issue.url,
+      });
+    }
+    for (const pr of context.githubTasks.pullRequests) {
+      sources.push({
+        type: 'github_pull_request',
+        label: `${pr.repo}#${pr.number} — ${pr.title}${pr.draft ? ' [draft]' : ''}`,
+        url: pr.url,
+      });
+    }
+  }
+  for (const task of context.notionTasks) {
+    sources.push({
+      type: 'notion_task',
+      label: task.title,
+      url: task.url,
+    });
+  }
+  if (context.slackMentions.length > 0) {
+    sources.push({
+      type: 'slack_mention',
+      label: `최근 ${SLACK_MENTION_SINCE_HOURS}h 본인 멘션 ${context.slackMentions.length}건`,
+    });
+  }
+  if (context.previousPlan) {
+    sources.push({
+      type: 'previous_plan',
+      label: `직전 PM 실행 #${context.previousPlan.agentRunId} (${context.previousPlan.endedAt.toISOString().slice(0, 10)})`,
+    });
+  }
+  if (context.previousWorklog) {
+    sources.push({
+      type: 'previous_worklog',
+      label: `직전 Work Reviewer 실행 #${context.previousWorklog.agentRunId} (${context.previousWorklog.endedAt.toISOString().slice(0, 10)})`,
+    });
+  }
+  return sources;
+};

@@ -1,10 +1,12 @@
 import { PullRequestReview } from '../agent/code-reviewer/domain/code-reviewer.type';
+import { ContextSummary } from '../agent/pm/application/sync-context.usecase';
 import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
 import {
   formatContextSummary,
   formatDailyPlan,
   formatDailyReview,
+  formatModelFooter,
   formatPullRequestReview,
 } from './slack.service';
 
@@ -14,6 +16,8 @@ const task = (title: string, overrides: Partial<TaskItem> = {}): TaskItem => ({
   source: overrides.source ?? 'USER_INPUT',
   subtasks: overrides.subtasks ?? [],
   isCriticalPath: overrides.isCriticalPath ?? false,
+  ...(overrides.lineage !== undefined ? { lineage: overrides.lineage } : {}),
+  ...(overrides.url !== undefined ? { url: overrides.url } : {}),
 });
 
 describe('formatDailyPlan', () => {
@@ -205,61 +209,251 @@ describe('formatPullRequestReview', () => {
   });
 });
 
-describe('formatContextSummary', () => {
-  it('GitHub fetch 성공 시 issue/PR 카운트 라인 출력', () => {
-    const output = formatContextSummary({
-      github: { fetchSucceeded: true, issueCount: 3, pullRequestCount: 2 },
-      notion: { taskCount: 5 },
-      slack: { mentionCount: 1, sinceHours: 24 },
-      previousPlan: null,
-      previousWorklog: null,
+describe('formatModelFooter', () => {
+  it('AgentRunOutcome 의 modelUsed 와 agentRunId 를 한 줄 footer 로 렌더', () => {
+    const footer = formatModelFooter({
+      result: {},
+      modelUsed: 'codex-cli',
+      agentRunId: 42,
     });
-    expect(output).toContain('GitHub assigned: issue 3건 / PR 2건');
-    expect(output).toContain('Notion task DB: 5건');
-    expect(output).toContain('Slack 멘션 (24h): 1건');
+
+    expect(footer).toBe('\n\n_model: codex-cli · run #42_');
   });
 
-  it('GitHub fetch 실패 시 안내 라인 + 토큰 미설정 힌트', () => {
-    const output = formatContextSummary({
-      github: { fetchSucceeded: false, issueCount: 0, pullRequestCount: 0 },
-      notion: { taskCount: 0 },
-      slack: { mentionCount: 0, sinceHours: 24 },
-      previousPlan: null,
-      previousWorklog: null,
+  it('result 타입과 무관하게 동작 — generic 푸터', () => {
+    const footer = formatModelFooter({
+      result: { plan: 'whatever' },
+      modelUsed: 'claude-cli',
+      agentRunId: 7,
     });
-    expect(output).toContain('GitHub assigned: 수집 실패');
-    expect(output).toContain('GITHUB_TOKEN 미설정 또는 권한 문제');
+
+    expect(footer).toContain('claude-cli');
+    expect(footer).toContain('run #7');
+  });
+});
+
+describe('formatDailyPlan — lineage 라벨 (PRO-2)', () => {
+  const planWithLineage: DailyPlan = {
+    topPriority: task('이메일 지연 모니터링', {
+      isCriticalPath: true,
+      lineage: 'POSTPONED',
+    }),
+    varianceAnalysis: {
+      rolledOverTasks: [],
+      analysisReasoning: '(이월 없음)',
+    },
+    morning: [
+      task('코드 리팩토링', { lineage: 'CARRIED' }),
+      task('PRD 검토', { lineage: 'NEW' }),
+    ],
+    afternoon: [task('PR 리뷰', { lineage: 'NEW' })],
+    blocker: null,
+    estimatedHours: 5,
+    reasoning: 'r',
+  };
+
+  it('NEW / CARRIED / POSTPONED 라벨이 각 task 앞에 prefix 로 붙는다', () => {
+    const output = formatDailyPlan(planWithLineage);
+    expect(output).toContain('🆕');
+    expect(output).toContain('🔁');
+    expect(output).toContain('⏭');
   });
 
-  it('직전 PM/Work Reviewer 실행 메타가 있으면 # ID + endedAt 표기', () => {
-    const output = formatContextSummary({
-      github: { fetchSucceeded: true, issueCount: 0, pullRequestCount: 0 },
-      notion: { taskCount: 0 },
-      slack: { mentionCount: 0, sinceHours: 24 },
-      previousPlan: {
-        agentRunId: 99,
-        endedAt: '2026-04-23T05:00:00.000Z',
+  it('lineage 가 없는 구버전 task 는 prefix 없이 렌더 (backward compat)', () => {
+    const legacyPlan: DailyPlan = {
+      ...planWithLineage,
+      topPriority: task('lineage 없는 구버전 plan', { isCriticalPath: true }),
+      morning: [task('legacy morning')],
+      afternoon: [task('legacy afternoon')],
+    };
+    const output = formatDailyPlan(legacyPlan);
+    expect(output).not.toContain('🆕');
+    expect(output).not.toContain('🔁');
+    expect(output).not.toContain('⏭');
+    expect(output).toContain('legacy morning');
+  });
+});
+
+describe('formatDailyPlan — url 링크 (PRO-2+ 이슈 A)', () => {
+  it('task 에 url 이 있으면 Slack 마크다운 링크로 렌더', () => {
+    const plan: DailyPlan = {
+      topPriority: task('PR #707 리뷰', {
+        url: 'https://github.com/foo/bar/pull/707',
+      }),
+      varianceAnalysis: {
+        rolledOverTasks: [],
+        analysisReasoning: '(이월 없음)',
       },
-      previousWorklog: {
-        agentRunId: 100,
-        endedAt: '2026-04-23T08:00:00.000Z',
-      },
-    });
-    expect(output).toContain('직전 PM 실행 #99 (2026-04-23T05:00:00.000Z)');
+      morning: [],
+      afternoon: [],
+      blocker: null,
+      estimatedHours: 1,
+      reasoning: 'r',
+    };
+    const output = formatDailyPlan(plan);
     expect(output).toContain(
-      '직전 Work Reviewer 실행 #100 (2026-04-23T08:00:00.000Z)',
+      '<https://github.com/foo/bar/pull/707|PR #707 리뷰>',
     );
   });
 
-  it('직전 실행이 없으면 "없음" 표기', () => {
+  it('url 이 없거나 빈 문자열이면 단순 텍스트로 렌더', () => {
+    const plan: DailyPlan = {
+      topPriority: task('자유 텍스트 task'),
+      varianceAnalysis: {
+        rolledOverTasks: [],
+        analysisReasoning: '(이월 없음)',
+      },
+      morning: [task('빈 url', { url: '' })],
+      afternoon: [],
+      blocker: null,
+      estimatedHours: 1,
+      reasoning: 'r',
+    };
+    const output = formatDailyPlan(plan);
+    expect(output).toContain('• 자유 텍스트 task');
+    expect(output).toContain('• 빈 url');
+    expect(output).not.toContain('<|');
+  });
+
+  it('url 이 http(s) 가 아니면 broken link 회피 — 단순 텍스트로 fallback (codex P0 fix)', () => {
+    const plan: DailyPlan = {
+      topPriority: task('fragment 만 반환', { url: '/pull/707' }),
+      varianceAnalysis: {
+        rolledOverTasks: [],
+        analysisReasoning: '(이월 없음)',
+      },
+      morning: [task('javascript 스킴 차단', { url: 'javascript:alert(1)' })],
+      afternoon: [],
+      blocker: null,
+      estimatedHours: 1,
+      reasoning: 'r',
+    };
+    const output = formatDailyPlan(plan);
+    expect(output).not.toContain('</pull/707|');
+    expect(output).not.toContain('<javascript:');
+    expect(output).toContain('• fragment 만 반환');
+    expect(output).toContain('• javascript 스킴 차단');
+  });
+
+  it('title/url 에 Slack mrkdwn 특수문자 (`<>|`) 가 섞여도 sanitize 후 링크 (omc P2 fix)', () => {
+    const plan: DailyPlan = {
+      topPriority: task('악성<title>|injection', {
+        url: 'https://example.com/path?q=<bad>|trick',
+      }),
+      varianceAnalysis: {
+        rolledOverTasks: [],
+        analysisReasoning: '(이월 없음)',
+      },
+      morning: [],
+      afternoon: [],
+      blocker: null,
+      estimatedHours: 1,
+      reasoning: 'r',
+    };
+    const output = formatDailyPlan(plan);
+    const linkMatch = output.match(/<https:\/\/example\.com[^>]+\|[^>]+>/);
+    expect(linkMatch).not.toBeNull();
+    expect(linkMatch?.[0]).not.toContain('<bad>');
+    expect(linkMatch?.[0]).not.toContain('악성<title>');
+  });
+});
+
+describe('formatModelFooter — sanitize (codex P1 / omc P2 fix)', () => {
+  it('modelUsed 에 mrkdwn 특수문자가 섞여도 footer 가 안 깨짐', () => {
+    const footer = formatModelFooter({
+      result: {},
+      modelUsed: 'evil<model>|name',
+      agentRunId: 7,
+    });
+    expect(footer).not.toContain('<model>');
+    expect(footer).not.toContain('|name');
+    expect(footer).toContain('evilmodelname');
+    expect(footer).toContain('run #7');
+  });
+});
+
+describe('formatContextSummary (HOTFIX-1)', () => {
+  const summary: ContextSummary = {
+    github: { fetchSucceeded: true, issueCount: 3, pullRequestCount: 1 },
+    notion: { taskCount: 2 },
+    slack: { mentionCount: 5, sinceHours: 24 },
+    previousPlan: { agentRunId: 99, endedAt: '2026-04-26T05:00:00.000Z' },
+    previousWorklog: { agentRunId: 100, endedAt: '2026-04-26T08:00:00.000Z' },
+  };
+
+  it('전 섹션 (GitHub/Notion/Slack/PM/Work Reviewer) 을 한국어 마크다운으로 출력', () => {
+    const output = formatContextSummary(summary);
+    expect(output).toContain('*컨텍스트 재수집 결과*');
+    expect(output).toContain('Issue 3건 / PR 1건');
+    expect(output).toContain('활성 task 2건');
+    expect(output).toContain('본인 멘션 5건');
+    expect(output).toContain('직전 PM 실행*: #99 (2026-04-26)');
+    expect(output).toContain('직전 Work Reviewer 실행*: #100 (2026-04-26)');
+  });
+
+  it('GitHub fetch 실패 시 ⚠ 라인 노출 + Notion/Slack 은 그대로', () => {
     const output = formatContextSummary({
-      github: { fetchSucceeded: true, issueCount: 0, pullRequestCount: 0 },
-      notion: { taskCount: 0 },
-      slack: { mentionCount: 0, sinceHours: 24 },
+      ...summary,
+      github: { fetchSucceeded: false, issueCount: 0, pullRequestCount: 0 },
+    });
+    expect(output).toContain('⚠ 수집 실패');
+    expect(output).toContain('활성 task 2건');
+  });
+
+  it('직전 plan/worklog 없으면 "없음" 라인 노출', () => {
+    const output = formatContextSummary({
+      ...summary,
       previousPlan: null,
       previousWorklog: null,
     });
-    expect(output).toContain('직전 PM 실행: 없음');
-    expect(output).toContain('직전 Work Reviewer 실행: 없음');
+    expect(output).toContain('직전 PM 실행*: 없음');
+    expect(output).toContain('직전 Work Reviewer 실행*: 없음');
+  });
+});
+
+describe('formatDailyPlan — 참조 소스 섹션', () => {
+  const plan: DailyPlan = {
+    topPriority: task('최우선'),
+    varianceAnalysis: {
+      rolledOverTasks: [],
+      analysisReasoning: '(이월 없음)',
+    },
+    morning: [task('오전 1')],
+    afternoon: [task('오후 1')],
+    blocker: null,
+    estimatedHours: 5,
+    reasoning: 'r',
+  };
+
+  it('sources 가 비어있으면 참조 소스 섹션 생략', () => {
+    const output = formatDailyPlan(plan, []);
+    expect(output).not.toContain('*참조 소스*');
+  });
+
+  it('sources 가 있으면 맨 위에 섹션 + URL 있는 항목은 링크 표기', () => {
+    const output = formatDailyPlan(plan, [
+      {
+        type: 'github_issue',
+        label: 'foo/bar#12 — 크롤러 버그',
+        url: 'https://github.com/foo/bar/issues/12',
+      },
+      { type: 'notion_task', label: '결제 API 리팩터링' },
+      {
+        type: 'previous_plan',
+        label: '직전 PM 실행 #99 (2026-04-23)',
+      },
+    ]);
+    expect(output).toContain('*참조 소스*');
+    expect(output).toContain(
+      '• foo/bar#12 — 크롤러 버그 (<https://github.com/foo/bar/issues/12|링크>)',
+    );
+    expect(output).toContain('• 결제 API 리팩터링');
+    expect(output).not.toContain('결제 API 리팩터링 (<');
+    expect(output).toContain('• 직전 PM 실행 #99 (2026-04-23)');
+
+    // 맨 위에 오는지 — *오늘의 최우선* 앞에 위치
+    const sourcesIdx = output.indexOf('*참조 소스*');
+    const topPriorityIdx = output.indexOf('*오늘의 최우선');
+    expect(sourcesIdx).toBeLessThan(topPriorityIdx);
   });
 });

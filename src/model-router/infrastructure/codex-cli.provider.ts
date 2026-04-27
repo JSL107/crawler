@@ -12,6 +12,7 @@ import {
 } from '../domain/model-router.type';
 import { ModelProviderPort } from '../domain/port/model-provider.port';
 import { buildSafeChildEnv } from './cli-process.util';
+import { redactPii } from './pii-redaction.util';
 
 const CODEX_EXECUTABLE = 'codex';
 const CODEX_DEFAULT_TIMEOUT_MS = 180_000;
@@ -65,7 +66,9 @@ export class CodexCliProvider implements ModelProviderPort {
 
     try {
       const args = buildCodexArgs({ outputFile });
-      const stdinPayload = buildCodexPrompt(request);
+      // OPS-4: 외부 CLI 로 흘려보내기 직전 토큰 류 시크릿을 redact —
+      // GitHub issue body / Slack mention / Notion property 가 prompt 에 inline 으로 들어가는 surface 차단.
+      const stdinPayload = redactPii(buildCodexPrompt(request));
       await this.spawnCodex({ args, cwd: workDir, homeDir, stdinPayload });
       const text = (await readFile(outputFile, 'utf-8')).trim();
 

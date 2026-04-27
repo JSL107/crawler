@@ -1,6 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import {
+  AgentRunOutcome,
+  AgentRunService,
+} from '../../../agent-run/application/agent-run.service';
 import {
   EvidenceInput,
   TriggerType,
@@ -35,7 +38,7 @@ export class ReviewPullRequestUsecase {
   async execute({
     prRef,
     slackUserId,
-  }: ReviewPullRequestInput): Promise<PullRequestReview> {
+  }: ReviewPullRequestInput): Promise<AgentRunOutcome<PullRequestReview>> {
     // INVALID_PR_REFERENCE 는 파싱 시점에 즉시 예외.
     const ref = parsePrReference(prRef);
 

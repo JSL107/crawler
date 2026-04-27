@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
-import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import {
+  AgentRunOutcome,
+  AgentRunService,
+} from '../../../agent-run/application/agent-run.service';
 import { TriggerType } from '../../../agent-run/domain/agent-run.type';
 import { DomainStatus } from '../../../common/exception/domain-status.enum';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
@@ -27,7 +30,7 @@ export class GeneratePoShadowUsecase {
   async execute({
     extraContext,
     slackUserId,
-  }: GeneratePoShadowInput): Promise<PoShadowReport> {
+  }: GeneratePoShadowInput): Promise<AgentRunOutcome<PoShadowReport>> {
     // slackUserId 한정 검색 — 다른 사용자의 PM run 을 검토하지 않게 (codex review b6xkjewd2 P2).
     const snapshot = await this.agentRunService.findLatestSucceededRun({
       agentType: AgentType.PM,

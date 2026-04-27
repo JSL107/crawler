@@ -62,7 +62,11 @@ describe('GenerateBackendPlanUsecase', () => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
       const execution = await input.run({ agentRunId: 13 });
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 13,
+      };
     });
     githubClient = {
       listMyAssignedTasks: jest.fn(),
@@ -190,6 +194,8 @@ describe('GenerateBackendPlanUsecase', () => {
       subject: '크롤러 재시도 정책 리팩터링',
       slackUserId: 'U1',
     });
-    expect(result.apiDesign).toBeNull();
+    expect(result.result.apiDesign).toBeNull();
+    expect(result.modelUsed).toBe('claude-cli');
+    expect(result.agentRunId).toBe(13);
   });
 });

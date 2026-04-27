@@ -13,6 +13,7 @@ import {
 } from '../domain/model-router.type';
 import { ModelProviderPort } from '../domain/port/model-provider.port';
 import { buildSafeChildEnv } from './cli-process.util';
+import { redactPii } from './pii-redaction.util';
 
 const CLAUDE_EXECUTABLE = 'claude';
 const CLAUDE_DEFAULT_TIMEOUT_MS = 180_000;
@@ -84,15 +85,19 @@ export class ClaudeCliProvider implements ModelProviderPort {
 
     try {
       const model = this.configService.get<string>('CLAUDE_MODEL')?.trim();
+      // OPS-4: stdin (사용자 입력 경로) 뿐 아니라 --system-prompt argv 까지 redact —
+      // 정적 상수만 들어오는 경로지만 codex/gemini 와 동일 정책으로 일관성 유지 (codex P1 지적).
       const args = buildClaudeArgs({
-        systemPrompt: request.systemPrompt,
+        systemPrompt: request.systemPrompt
+          ? redactPii(request.systemPrompt)
+          : undefined,
         model: model && model.length > 0 ? model : undefined,
       });
       const stdout = await this.spawnClaude({
         args,
         cwd: workDir,
         homeDir,
-        stdinPayload: request.prompt,
+        stdinPayload: redactPii(request.prompt),
       });
       const { text, modelUsed } = parseClaudeJsonOutput(stdout);
 

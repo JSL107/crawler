@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { AgentRunService } from '../../../agent-run/application/agent-run.service';
+import {
+  AgentRunOutcome,
+  AgentRunService,
+} from '../../../agent-run/application/agent-run.service';
 import { TriggerType } from '../../../agent-run/domain/agent-run.type';
 import { DomainStatus } from '../../../common/exception/domain-status.enum';
 import { ModelRouterUsecase } from '../../../model-router/application/model-router.usecase';
@@ -45,7 +48,7 @@ export class GenerateWorklogUsecase {
   async execute({
     workText,
     slackUserId,
-  }: GenerateWorklogInput): Promise<DailyReview> {
+  }: GenerateWorklogInput): Promise<AgentRunOutcome<DailyReview>> {
     const trimmed = workText.trim();
     if (trimmed.length === 0) {
       throw new WorkReviewerException({

@@ -32,6 +32,15 @@ export interface ExecuteAgentRunInput<T> {
   run: (context: AgentRunContext) => Promise<AgentRunExecutionResult<T>>;
 }
 
+// execute 의 외부 노출 형태 — 도메인 결과(result) 와 라우팅 메타(modelUsed/agentRunId) 분리.
+// SlackService formatter 가 footer 렌더링에 modelUsed/agentRunId 를 사용하고 (PRO-3),
+// 후속 OPS-1 Quota Pane 도 동일 outcome 을 재활용한다.
+export interface AgentRunOutcome<T> {
+  result: T;
+  modelUsed: string;
+  agentRunId: number;
+}
+
 // 모든 에이전트 유스케이스가 공유할 AgentRun 라이프사이클 템플릿.
 // begin → run → finish(SUCCEEDED|FAILED) 순서를 강제하고 EvidenceRecord 기록까지 캡슐화한다.
 // 기획서 §8 증거 기반 운영 원칙: 모든 에이전트 실행은 DB 에 흔적과 근거를 남겨야 한다.
@@ -50,7 +59,7 @@ export class AgentRunService {
     inputSnapshot,
     evidence,
     run,
-  }: ExecuteAgentRunInput<T>): Promise<T> {
+  }: ExecuteAgentRunInput<T>): Promise<AgentRunOutcome<T>> {
     const { id } = await this.repository.begin({
       agentType,
       triggerType,
@@ -72,7 +81,11 @@ export class AgentRunService {
         output: execution.output,
       });
 
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: id,
+      };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(

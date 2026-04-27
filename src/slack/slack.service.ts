@@ -18,11 +18,16 @@ import {
   ContextSummary,
   SyncContextUsecase,
 } from '../agent/pm/application/sync-context.usecase';
-import { DailyPlan, TaskItem } from '../agent/pm/domain/pm-agent.type';
+import {
+  DailyPlan,
+  DailyPlanSource,
+  TaskItem,
+} from '../agent/pm/domain/pm-agent.type';
 import { GeneratePoShadowUsecase } from '../agent/po-shadow/application/generate-po-shadow.usecase';
 import { PoShadowReport } from '../agent/po-shadow/domain/po-shadow.type';
 import { GenerateWorklogUsecase } from '../agent/work-reviewer/application/generate-worklog.usecase';
 import { DailyReview } from '../agent/work-reviewer/domain/work-reviewer.type';
+import { AgentRunOutcome } from '../agent-run/application/agent-run.service';
 import { DomainException } from '../common/exception/domain.exception';
 
 // 이대리 Slack 어댑터.
@@ -38,10 +43,10 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     private readonly generateDailyPlanUsecase: GenerateDailyPlanUsecase,
     private readonly generateWorklogUsecase: GenerateWorklogUsecase,
     private readonly reviewPullRequestUsecase: ReviewPullRequestUsecase,
-    private readonly syncContextUsecase: SyncContextUsecase,
     private readonly generateImpactReportUsecase: GenerateImpactReportUsecase,
     private readonly generatePoShadowUsecase: GeneratePoShadowUsecase,
     private readonly generateBackendPlanUsecase: GenerateBackendPlanUsecase,
+    private readonly syncContextUsecase: SyncContextUsecase,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -99,31 +104,45 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     this.logger.log('이대리 Slack 봇이 정상 종료되었습니다.');
   }
 
-  private registerCommands(app: App): void {
-    app.command('/ping', async ({ ack, respond }) => {
-      await ack();
-      await respond(`이대리 pong — ${new Date().toISOString()}`);
-    });
+  // PRO-1: Slack 봇이 사용자 DM(`U...`) 또는 채널(`C.../G...`) 로 메시지를 발송한다.
+  // chat.postMessage 의 `channel` 파라미터는 user/channel/group ID 셋 다 받는다.
+  // private 채널이면 봇이 invite 돼 있어야 함 (외부 운영 책임).
+  // 봇이 비활성(env 누락) 상태면 graceful — 호출자에게 명확한 예외로 끊는다.
+  async postMessage({
+    target,
+    text,
+  }: {
+    target: string;
+    text: string;
+  }): Promise<void> {
+    if (!this.app) {
+      throw new Error(
+        'Slack 봇이 비활성 상태입니다 (SLACK_BOT_TOKEN/APP_TOKEN/SIGNING_SECRET 누락).',
+      );
+    }
+    await this.app.client.chat.postMessage({ channel: target, text });
+  }
 
+  private registerCommands(app: App): void {
     app.command('/today', async ({ ack, command, respond }) => {
+      // 자유 텍스트는 옵션. 빈 입력이면 GitHub assigned / Notion task / Slack 멘션 / 직전 PM·Work Reviewer
+      // 자동 수집만으로 plan 생성 (사용자 발견 — 적을 일이 없을 때 굳이 텍스트 강제할 이유 없음).
+      // 자동 컨텍스트도 모두 비어있으면 GenerateDailyPlanUsecase 가 EMPTY_TASKS_INPUT 으로 끊고 안내한다.
       const tasksText = command.text?.trim() ?? '';
-      if (tasksText.length === 0) {
-        await ack({
-          response_type: 'ephemeral',
-          text: '사용법: `/today <오늘 할 일을 자유롭게 적어주세요>`',
-        });
-        return;
-      }
+      const ackMessage =
+        tasksText.length === 0
+          ? '이대리가 자동 수집한 컨텍스트(GitHub/Notion/Slack/어제 plan)로 오늘의 계획을 작성 중입니다 (10~20초 소요)...'
+          : '이대리가 오늘의 계획을 작성 중입니다 (10~20초 소요)...';
 
       // ack body 로 즉시 "작성 중" 메시지를 보낸다 (Slack Bolt slow-command 공식 패턴).
       // 이후 respond(replace_original: true) 가 성공하면 최종 결과로 교체되고, 실패해도 메시지가 누적될 뿐 UX 퇴보는 없다.
       await ack({
         response_type: 'ephemeral',
-        text: '이대리가 오늘의 계획을 작성 중입니다 (10~20초 소요)...',
+        text: ackMessage,
       });
 
       try {
-        const plan = await this.generateDailyPlanUsecase.execute({
+        const outcome = await this.generateDailyPlanUsecase.execute({
           tasksText,
           slackUserId: command.user_id,
         });
@@ -131,7 +150,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatDailyPlan(plan),
+          text:
+            formatDailyPlan(outcome.result.plan, outcome.result.sources) +
+            formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -172,7 +193,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       });
 
       try {
-        const review = await this.generateWorklogUsecase.execute({
+        const outcome = await this.generateWorklogUsecase.execute({
           workText,
           slackUserId: command.user_id,
         });
@@ -180,7 +201,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatDailyReview(review),
+          text: formatDailyReview(outcome.result) + formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -219,7 +240,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       });
 
       try {
-        const plan = await this.generateBackendPlanUsecase.execute({
+        const outcome = await this.generateBackendPlanUsecase.execute({
           subject,
           slackUserId: command.user_id,
         });
@@ -227,7 +248,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatBackendPlan(plan),
+          text: formatBackendPlan(outcome.result) + formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -259,7 +280,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       });
 
       try {
-        const report = await this.generatePoShadowUsecase.execute({
+        const outcome = await this.generatePoShadowUsecase.execute({
           extraContext,
           slackUserId: command.user_id,
         });
@@ -267,7 +288,8 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatPoShadowReport(report),
+          text:
+            formatPoShadowReport(outcome.result) + formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -306,7 +328,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       });
 
       try {
-        const report = await this.generateImpactReportUsecase.execute({
+        const outcome = await this.generateImpactReportUsecase.execute({
           subject,
           slackUserId: command.user_id,
         });
@@ -314,7 +336,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatImpactReport(report),
+          text: formatImpactReport(outcome.result) + formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -338,10 +360,11 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     });
 
     app.command('/sync-context', async ({ ack, command, respond }) => {
-      // 모델 호출 없는 가벼운 상태 점검 — 즉시 ack 후 실제 결과로 교체.
+      // /sync-context 는 PM `/today` 가 보는 5종 컨텍스트 (GitHub/Notion/Slack/직전 plan/직전 worklog) 를
+      // 모델 호출 없이 다시 한번 점검만 한다. AgentRun 도 만들지 않고 푸터(modelUsed/run#) 도 없다.
       await ack({
         response_type: 'ephemeral',
-        text: '이대리가 컨텍스트(GitHub/Notion/Slack/직전 실행)를 재수집 중입니다 (수 초 소요)...',
+        text: '이대리가 외부 컨텍스트를 재수집 중입니다 (5~15초 소요)...',
       });
 
       try {
@@ -391,7 +414,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       });
 
       try {
-        const review = await this.reviewPullRequestUsecase.execute({
+        const outcome = await this.reviewPullRequestUsecase.execute({
           prRef,
           slackUserId: command.user_id,
         });
@@ -399,7 +422,9 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         await respond({
           response_type: 'ephemeral',
           replace_original: true,
-          text: formatPullRequestReview({ prRef, review }),
+          text:
+            formatPullRequestReview({ prRef, review: outcome.result }) +
+            formatModelFooter(outcome),
         });
       } catch (error: unknown) {
         const rawMessage =
@@ -423,6 +448,52 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
     });
   }
 }
+
+// Slack mrkdwn `<url|title>` 링크 안에 들어가는 텍스트가 `<` / `>` / `|` 를 포함하면 파싱이 깨진다.
+// LLM 출력 (task.title) 이나 외부 CLI 결과 (modelUsed) 가 우연히 이 문자를 포함해도 footer/link 가 안 깨지도록
+// 보수적으로 제거. 의미 손실은 미미하고 회귀 회피 효과 큼 (codex/omc P1 지적).
+const sanitizeForSlackLink = (text: string): string =>
+  text.replace(/[<>|]/g, '');
+
+// Slack mrkdwn `<url|...>` 안의 url 은 반드시 http(s) 스킴이어야 한다.
+// LLM 이 fragment(`/pull/707`) 만 반환하는 사고를 막기 위해 prefix 화이트리스트 (codex P0 지적).
+const isSafeHttpUrl = (url: string): boolean =>
+  url.startsWith('http://') || url.startsWith('https://');
+
+// 모든 슬래시 명령 응답 끝에 붙는 공통 푸터 — 어떤 모델/run id 로 응답이 만들어졌는지 노출.
+// PRO-3: 디버깅·품질 회고용 (어떤 provider 가 어떤 응답을 만들었는지 즉시 추적).
+// agentRunId 는 DB 의 agent_run.id 와 1:1 매칭이라 사후 분석/Failure Replay 에 그대로 사용 가능.
+// modelUsed 는 외부 CLI stdout 파싱 결과라 Slack mrkdwn 안전하게 sanitize.
+export const formatModelFooter = ({
+  modelUsed,
+  agentRunId,
+}: AgentRunOutcome<unknown>): string =>
+  `\n\n_model: ${sanitizeForSlackLink(modelUsed)} · run #${agentRunId}_`;
+
+// /sync-context 결과 — 컨텍스트 재수집 상태 요약을 한국어 Slack 마크다운으로 렌더.
+// 모델 호출이 없으므로 formatModelFooter 는 붙이지 않는다 (HOTFIX-1).
+export const formatContextSummary = (summary: ContextSummary): string => {
+  const githubLine = summary.github.fetchSucceeded
+    ? `✅ Issue ${summary.github.issueCount}건 / PR ${summary.github.pullRequestCount}건`
+    : `⚠ 수집 실패 (GITHUB_TOKEN 또는 권한 확인)`;
+
+  const lines: string[] = [
+    '*컨텍스트 재수집 결과*',
+    '',
+    `*GitHub*: ${githubLine}`,
+    `*Notion*: 활성 task ${summary.notion.taskCount}건`,
+    `*Slack*: 본인 멘션 ${summary.slack.mentionCount}건 (최근 ${summary.slack.sinceHours}h)`,
+    '',
+    summary.previousPlan
+      ? `*직전 PM 실행*: #${summary.previousPlan.agentRunId} (${summary.previousPlan.endedAt.slice(0, 10)})`
+      : '*직전 PM 실행*: 없음',
+    summary.previousWorklog
+      ? `*직전 Work Reviewer 실행*: #${summary.previousWorklog.agentRunId} (${summary.previousWorklog.endedAt.slice(0, 10)})`
+      : '*직전 Work Reviewer 실행*: 없음',
+  ];
+
+  return lines.join('\n');
+};
 
 // /plan-task 결과 — BackendPlan 을 한국어 Slack 마크다운으로 렌더.
 export const formatBackendPlan = (plan: BackendPlan): string => {
@@ -550,45 +621,61 @@ export const formatImpactReport = (report: ImpactReport): string => {
   return lines.join('\n');
 };
 
-// /sync-context 결과를 사용자에게 보여줄 한국어 요약 — 5종 source 의 현재 상태 + 직전 실행 메타.
-export const formatContextSummary = (summary: ContextSummary): string => {
-  const githubLine = summary.github.fetchSucceeded
-    ? `• GitHub assigned: issue ${summary.github.issueCount}건 / PR ${summary.github.pullRequestCount}건`
-    : '• GitHub assigned: 수집 실패 (GITHUB_TOKEN 미설정 또는 권한 문제)';
-  const notionLine = `• Notion task DB: ${summary.notion.taskCount}건`;
-  const slackLine = `• Slack 멘션 (${summary.slack.sinceHours}h): ${summary.slack.mentionCount}건`;
-  const previousPlanLine = summary.previousPlan
-    ? `• 직전 PM 실행 #${summary.previousPlan.agentRunId} (${summary.previousPlan.endedAt})`
-    : '• 직전 PM 실행: 없음';
-  const previousWorklogLine = summary.previousWorklog
-    ? `• 직전 Work Reviewer 실행 #${summary.previousWorklog.agentRunId} (${summary.previousWorklog.endedAt})`
-    : '• 직전 Work Reviewer 실행: 없음';
-
+// DailyPlan 결과 위에 노출할 "참조 소스" 섹션 — /today 응답 맨 위에 섞인다.
+// 사용자가 plan 이 어떤 데이터에 근거해 만들어졌는지 즉시 확인할 수 있도록 제목 + URL 을 노출한다.
+const formatSourceReferences = (sources: DailyPlanSource[]): string[] => {
+  if (sources.length === 0) {
+    return [];
+  }
   return [
-    '*컨텍스트 재수집 완료* — 다음 `/today` 호출 시 동일한 데이터를 모델에게 전달합니다.',
+    '*참조 소스*',
+    ...sources.map((src) => {
+      const linked =
+        src.url && isSafeHttpUrl(src.url)
+          ? ` (<${sanitizeForSlackLink(src.url)}|링크>)`
+          : '';
+      return `• ${src.label}${linked}`;
+    }),
     '',
-    githubLine,
-    notionLine,
-    slackLine,
-    '',
-    previousPlanLine,
-    previousWorklogLine,
-  ].join('\n');
+  ];
+};
+
+// lineage 라벨 prefix — PRO-2 의 어제↔오늘 추적성을 한눈에 보여줌. 라벨 없는 구버전 plan 은 prefix 생략.
+const LINEAGE_LABEL: Record<NonNullable<TaskItem['lineage']>, string> = {
+  NEW: '🆕 ',
+  CARRIED: '🔁 ',
+  POSTPONED: '⏭ ',
+};
+
+// url 이 있으면 Slack 마크다운 링크로 감싸 PR/Issue/Notion 으로 즉시 이동 가능 (PRO-2+ 이슈 A).
+// http(s) 스킴이 아니면 broken link 회피 위해 단순 텍스트로 fallback (codex P0 지적).
+// title/url 둘 다 mrkdwn-safe 로 sanitize 해 `|` / `>` / `<` 가 섞여도 링크 파싱 안 깨짐.
+const renderTitleWithLink = (task: TaskItem): string => {
+  if (task.url && task.url.length > 0 && isSafeHttpUrl(task.url)) {
+    return `<${sanitizeForSlackLink(task.url)}|${sanitizeForSlackLink(task.title)}>`;
+  }
+  return task.title;
 };
 
 const renderTaskLine = (task: TaskItem): string => {
   const critical = task.isCriticalPath ? '⚠ ' : '';
+  const lineage = task.lineage ? LINEAGE_LABEL[task.lineage] : '';
+  const titled = renderTitleWithLink(task);
   const wbs =
     task.subtasks.length > 0
       ? `\n${task.subtasks
           .map((s) => `   ↳ ${s.title} (${s.estimatedMinutes}m)`)
           .join('\n')}`
       : '';
-  return `• ${critical}${task.title}${wbs}`;
+  return `• ${lineage}${critical}${titled}${wbs}`;
 };
 
-export const formatDailyPlan = (plan: DailyPlan): string => {
+export const formatDailyPlan = (
+  plan: DailyPlan,
+  sources: DailyPlanSource[] = [],
+): string => {
   const lines: string[] = [
+    ...formatSourceReferences(sources),
     '*오늘의 최우선 과제*',
     renderTaskLine(plan.topPriority),
     '',

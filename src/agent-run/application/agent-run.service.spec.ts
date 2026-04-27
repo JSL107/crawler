@@ -20,12 +20,12 @@ describe('AgentRunService', () => {
     repository.begin.mockResolvedValue({ id: 42 });
   });
 
-  it('성공 시 begin → run → finish(SUCCEEDED) 순서로 호출되고 결과를 반환한다', async () => {
+  it('성공 시 begin → run → finish(SUCCEEDED) 순서로 호출되고 outcome(result/modelUsed/agentRunId) 을 반환한다', async () => {
     // Given
     const plan = { topPriority: 'fix crawler bug' };
 
     // When
-    const result = await service.execute({
+    const outcome = await service.execute({
       agentType: AgentType.PM,
       triggerType: TriggerType.SLACK_COMMAND_TODAY,
       inputSnapshot: { text: 'hi' },
@@ -37,7 +37,11 @@ describe('AgentRunService', () => {
     });
 
     // Then
-    expect(result).toEqual(plan);
+    expect(outcome).toEqual({
+      result: plan,
+      modelUsed: 'mock-chatgpt',
+      agentRunId: 42,
+    });
     expect(repository.begin).toHaveBeenCalledWith({
       agentType: AgentType.PM,
       triggerType: TriggerType.SLACK_COMMAND_TODAY,

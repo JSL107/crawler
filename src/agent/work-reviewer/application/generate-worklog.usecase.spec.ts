@@ -32,7 +32,11 @@ describe('GenerateWorklogUsecase', () => {
     modelRouter = { route: jest.fn() };
     agentRunServiceExecute = jest.fn(async (input) => {
       const execution = await input.run({ agentRunId: 42 });
-      return execution.result;
+      return {
+        result: execution.result,
+        modelUsed: execution.modelUsed,
+        agentRunId: 42,
+      };
     });
     appendWorklogExecute = jest.fn().mockResolvedValue(null);
 
@@ -55,7 +59,9 @@ describe('GenerateWorklogUsecase', () => {
       slackUserId: 'U123',
     });
 
-    expect(result).toEqual(validReview);
+    expect(result.result).toEqual(validReview);
+    expect(result.modelUsed).toBe('codex-cli');
+    expect(result.agentRunId).toBe(42);
     expect(modelRouter.route).toHaveBeenCalledWith({
       agentType: AgentType.WORK_REVIEWER,
       request: expect.objectContaining({

@@ -13,14 +13,26 @@ export type TaskSource =
   | 'USER_INPUT' // /today 자유 텍스트
   | 'ROLLOVER'; // 어제 미완료 이월
 
+// 어제↔오늘 plan 간 추적 라벨 (PRO-2).
+// - NEW       : 오늘 신규 등장한 태스크
+// - CARRIED   : 어제 plan 에서 그대로 이어지는 태스크 (위치/시간대 동일)
+// - POSTPONED : 어제 미완료를 오늘 다른 시간대로 이동
+// dropped (드랍) 태스크는 plan 에 표시되지 않으므로 lineage 가 아니라 varianceAnalysis 에 기록한다.
+export type TaskLineage = 'NEW' | 'CARRIED' | 'POSTPONED';
+
 // 단일 태스크 — WBS(subtasks) + 병목(isCriticalPath) 포함.
 // id 는 source 별 자연 키 (GITHUB: "owner/repo#12", NOTION: pageId, 그 외: 해시/ts 기반).
+// lineage / url 은 optional — 구버전 plan 호환과 모델이 누락한 경우의 graceful 처리를 위해.
 export interface TaskItem {
   id: string;
   title: string;
   source: TaskSource;
   subtasks: SubTask[];
   isCriticalPath: boolean;
+  lineage?: TaskLineage;
+  // GITHUB Issue/PR 또는 NOTION page 의 클릭 가능한 URL.
+  // 사용자가 morning/afternoon 항목에서 어떤 업무인지 즉시 추적할 수 있도록 함 (PRO-2+).
+  url?: string;
 }
 
 // 이월(Variance) 분석 — 어제 plan 과 실제 결과를 비교해 모델이 판단한 내용.
@@ -43,6 +55,27 @@ export interface DailyPlan {
 export interface GenerateDailyPlanInput {
   tasksText: string;
   slackUserId: string;
+}
+
+// /today 응답 맨 위에 노출할 "참조 소스" 엔트리 한 건. Slack 사용자가 plan 이
+// "어디서 가져온 데이터" 를 근거로 만들어졌는지 즉시 판단할 수 있게 한다.
+export type DailyPlanSourceType =
+  | 'github_issue'
+  | 'github_pull_request'
+  | 'notion_task'
+  | 'slack_mention'
+  | 'previous_plan'
+  | 'previous_worklog';
+
+export interface DailyPlanSource {
+  type: DailyPlanSourceType;
+  label: string;
+  url?: string;
+}
+
+export interface DailyPlanResult {
+  plan: DailyPlan;
+  sources: DailyPlanSource[];
 }
 
 // PM Agent `/today` 한 번 실행에 대해 AgentRun.inputSnapshot 으로 저장되는 메트릭/메타 집합.
